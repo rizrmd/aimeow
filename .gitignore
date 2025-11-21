@@ -1,0 +1,102 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+ aimeow
+ aimeow.exe
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+
+# Go workspace file
+go.work
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+whatsmeow.db
+multiwhatsmeow.db
+demo.db
+
+# Log files
+*.log
+logs/
+
+# Configuration files (if they contain sensitive data)
+config.json
+config.local.json
+.env
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+bin/
+
+# Coverage reports
+coverage.out
+coverage.html
+
+# Profiling files
+*.prof
+cpu.prof
+mem.prof
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Security and encryption keys
+*.key
+*.pem
+*.crt
+*.p12
+encryption.key
+
+# Backup files
+*.bak
+*.backup
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+
+# Air live reload
+.air.toml
+
+# Realize config
+.realize.yaml

@@ -1,0 +1,313 @@
+basePath: /api/v1
+definitions:
+  main.ClientResponse:
+    properties:
+      connectedAt:
+        type: string
+      id:
+        type: string
+      isConnected:
+        type: boolean
+      messageCount:
+        type: integer
+      qrCode:
+        type: string
+    type: object
+  main.ConfigRequest:
+    properties:
+      callbackUrl:
+        type: string
+    required:
+    - callbackUrl
+    type: object
+  main.ConfigResponse:
+    properties:
+      callbackUrl:
+        type: string
+    type: object
+  main.CreateClientRequest:
+    properties:
+      OSName:
+        type: string
+    type: object
+  main.CreateClientResponse:
+    properties:
+      id:
+        type: string
+      qrUrl:
+        type: string
+    type: object
+  main.MessageResponse:
+    properties:
+      messages:
+        items:
+          type: string
+        type: array
+    type: object
+host: localhost:7030
+info:
+  contact: {}
+  description: A REST API for managing multiple WhatsApp clients
+  title: Aimeow WhatsApp Bot API
+  version: "1.0"
+paths:
+  /clients:
+    get:
+      consumes:
+      - application/json
+      description: Returns list of all WhatsApp clients
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.ClientResponse'
+            type: array
+      summary: Get all clients
+      tags:
+      - clients
+  /clients/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Disconnects and removes a WhatsApp client
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Disconnect and delete client
+      tags:
+      - clients
+    get:
+      consumes:
+      - application/json
+      description: Returns details of a specific WhatsApp client
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ClientResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get client by ID
+      tags:
+      - clients
+  /clients/{id}/messages:
+    get:
+      consumes:
+      - application/json
+      description: Returns recent messages for a specific WhatsApp client
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 50
+        description: Limit number of messages
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.MessageResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get messages for client
+      tags:
+      - messages
+  /clients/{id}/qr:
+    get:
+      consumes:
+      - application/json
+      description: Returns QR code in terminal format for client pairing
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: QR code in terminal format
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get QR code for client (terminal format)
+      tags:
+      - clients
+  /clients/new:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new WhatsApp client and returns QR code for pairing
+      parameters:
+      - description: Configuration object
+        in: body
+        name: config
+        schema:
+          $ref: '#/definitions/main.CreateClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.CreateClientResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new WhatsApp client
+      tags:
+      - clients
+  /config:
+    get:
+      consumes:
+      - application/json
+      description: Gets the current callback URL configuration
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ConfigResponse'
+      summary: Get current configuration
+      tags:
+      - config
+    post:
+      consumes:
+      - application/json
+      description: Sets the callback URL for receiving message webhooks
+      parameters:
+      - description: Configuration object
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/main.ConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Set webhook callback URL
+      tags:
+      - config
+  /files/{client_id}/{file_id}:
+    get:
+      consumes:
+      - application/json
+      description: Gets a media file for a specific client
+      parameters:
+      - description: Client ID
+        in: path
+        name: client_id
+        required: true
+        type: string
+      - description: File ID
+        in: path
+        name: file_id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: Media file
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get client file
+      tags:
+      - files
+  /qr:
+    get:
+      consumes:
+      - application/json
+      description: Returns QR code in HTML format for easy display in browser
+      parameters:
+      - description: Client ID
+        in: query
+        name: client_id
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML page with QR code
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get QR code for client (HTML format)
+      tags:
+      - clients
+swagger: "2.0"

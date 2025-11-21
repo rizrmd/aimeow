@@ -1,0 +1,477 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "A REST API for managing multiple WhatsApp clients",
+        "title": "Aimeow WhatsApp Bot API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:7030",
+    "basePath": "/api/v1",
+    "paths": {
+        "/clients": {
+            "get": {
+                "description": "Returns list of all WhatsApp clients",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clients"
+                ],
+                "summary": "Get all clients",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/main.ClientResponse"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/clients/new": {
+            "post": {
+                "description": "Creates a new WhatsApp client and returns QR code for pairing",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clients"
+                ],
+                "summary": "Create a new WhatsApp client",
+                "parameters": [
+                    {
+                        "description": "Configuration object",
+                        "name": "config",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/main.CreateClientRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.CreateClientResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/clients/{id}": {
+            "get": {
+                "description": "Returns details of a specific WhatsApp client",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clients"
+                ],
+                "summary": "Get client by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.ClientResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Disconnects and removes a WhatsApp client",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clients"
+                ],
+                "summary": "Disconnect and delete client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/clients/{id}/messages": {
+            "get": {
+                "description": "Returns recent messages for a specific WhatsApp client",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "messages"
+                ],
+                "summary": "Get messages for client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Limit number of messages",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.MessageResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/clients/{id}/qr": {
+            "get": {
+                "description": "Returns QR code in terminal format for client pairing",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "clients"
+                ],
+                "summary": "Get QR code for client (terminal format)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "QR code in terminal format",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/config": {
+            "get": {
+                "description": "Gets the current callback URL configuration",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "config"
+                ],
+                "summary": "Get current configuration",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.ConfigResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Sets the callback URL for receiving message webhooks",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "config"
+                ],
+                "summary": "Set webhook callback URL",
+                "parameters": [
+                    {
+                        "description": "Configuration object",
+                        "name": "config",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.ConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.ConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/files/{client_id}/{file_id}": {
+            "get": {
+                "description": "Gets a media file for a specific client",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "files"
+                ],
+                "summary": "Get client file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "client_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "File ID",
+                        "name": "file_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Media file",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/qr": {
+            "get": {
+                "description": "Returns QR code in HTML format for easy display in browser",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "clients"
+                ],
+                "summary": "Get QR code for client (HTML format)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "client_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML page with QR code",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "main.ClientResponse": {
+            "type": "object",
+            "properties": {
+                "connectedAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isConnected": {
+                    "type": "boolean"
+                },
+                "messageCount": {
+                    "type": "integer"
+                },
+                "qrCode": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.ConfigRequest": {
+            "type": "object",
+            "required": [
+                "callbackUrl"
+            ],
+            "properties": {
+                "callbackUrl": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.ConfigResponse": {
+            "type": "object",
+            "properties": {
+                "callbackUrl": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.CreateClientRequest": {
+            "type": "object",
+            "properties": {
+                "OSName": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.CreateClientResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "qrUrl": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.MessageResponse": {
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}
