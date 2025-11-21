@@ -961,13 +961,23 @@ func main() {
 	ctx := context.Background()
 
 	//create files directory if it does not exists
-	if err := os.MkdirAll("/app/files", 0755); err != nil {
+	filesDir := "/app/files"
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
 		panic(fmt.Errorf("failed to create files directory: %w", err))
 	}
 
-	container, err := sqlstore.New(ctx, "sqlite3", "file:/app/files/aimeow.db?_foreign_keys=on", dbLog)
+	// Check if directory is writable
+	if _, err := os.Stat(filesDir); err != nil {
+		panic(fmt.Errorf("files directory not accessible: %w", err))
+	}
+
+	// Create database path
+	dbPath := filepath.Join(filesDir, "aimeow.db")
+	fmt.Printf("Database path: %s\n", dbPath)
+
+	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath), dbLog)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("failed to initialize database container: %w", err))
 	}
 
 	// Initialize client manager

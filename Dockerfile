@@ -41,6 +41,10 @@ COPY --from=builder /app/aimeow .
 # Copy documentation files
 COPY --from=builder /app/docs ./docs
 
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Create files directory with proper permissions
 RUN mkdir -p /app/files && \
     chown -R appuser:appgroup /app
@@ -58,5 +62,5 @@ EXPOSE 7030
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:7030/health || exit 1
 
-# Run the application
-CMD ["./aimeow"]
+# Run the application via entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
