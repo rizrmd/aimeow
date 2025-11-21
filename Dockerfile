@@ -2,7 +2,7 @@
 FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev sqlite-dev
 
 # Set working directory
 WORKDIR /app
@@ -44,6 +44,9 @@ COPY --from=builder /app/docs ./docs
 # Create files directory with proper permissions
 RUN mkdir -p /app/files && \
     chown -R appuser:appgroup /app
+
+# Volume mount for persistent data
+VOLUME ["/app/files"]
 
 # Switch to non-root user
 USER appuser
