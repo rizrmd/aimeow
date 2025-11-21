@@ -966,14 +966,21 @@ func main() {
 		panic(fmt.Errorf("failed to create files directory: %w", err))
 	}
 
-	// Check if directory is writable
-	if _, err := os.Stat(filesDir); err != nil {
-		panic(fmt.Errorf("files directory not accessible: %w", err))
-	}
-
 	// Create database path
 	dbPath := filepath.Join(filesDir, "aimeow.db")
 	fmt.Printf("Database path: %s\n", dbPath)
+
+	// Try to create the database file to check permissions
+	dbFile, err := os.Create(dbPath)
+	if err != nil {
+		fmt.Printf("Warning: Cannot create database file: %v\n", err)
+		// Try alternative location in /tmp
+		dbPath = "/tmp/aimeow.db"
+		fmt.Printf("Using fallback database path: %s\n", dbPath)
+	} else {
+		dbFile.Close()
+		os.Remove(dbPath) // Remove empty file, let sqlstore create it properly
+	}
 
 	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath), dbLog)
 	if err != nil {
