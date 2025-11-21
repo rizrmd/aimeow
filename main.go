@@ -961,11 +961,11 @@ func main() {
 	ctx := context.Background()
 
 	//create files directory if it does not exists
-	if err := os.MkdirAll("files", 0755); err != nil {
+	if err := os.MkdirAll("/app/files", 0755); err != nil {
 		panic(fmt.Errorf("failed to create files directory: %w", err))
 	}
 
-	container, err := sqlstore.New(ctx, "sqlite3", "file:files/aimeow.db?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:/app/files/aimeow.db?_foreign_keys=on", dbLog)
 	if err != nil {
 		panic(err)
 	}
