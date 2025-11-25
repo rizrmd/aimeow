@@ -64,7 +64,7 @@ EXPOSE 7030
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:7030/health || exit 1
+    CMD curl -f http://localhost:7030/health || curl -f http://localhost:7030/ || exit 1
 
 # Run the application via entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]

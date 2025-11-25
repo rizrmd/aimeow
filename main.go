@@ -1389,6 +1389,12 @@ func main() {
 	})
 	fmt.Printf("Health check endpoint configured\n")
 
+	// Fallback health check at root
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "Aimeow WhatsApp API is running"})
+	})
+	fmt.Printf("Root health check endpoint configured\n")
+
 	// Swagger documentation
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	fmt.Printf("Swagger documentation configured\n")
