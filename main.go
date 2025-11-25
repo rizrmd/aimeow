@@ -1287,14 +1287,22 @@ func loadExistingClients(container *sqlstore.Container) error {
 }
 
 func main() {
+	fmt.Println("Starting Aimeow WhatsApp API Server...")
+
 	// Initialize database
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 	ctx := context.Background()
 
-	//create files directory if it does not exists
+	// Create files directory if it does not exist
 	filesDir := "/app/files"
 	if err := os.MkdirAll(filesDir, 0755); err != nil {
-		panic(fmt.Errorf("failed to create files directory: %w", err))
+		fmt.Printf("Warning: Failed to create files directory: %v\n", err)
+		// Try alternative directory
+		filesDir = "/tmp/files"
+		if err := os.MkdirAll(filesDir, 0755); err != nil {
+			panic(fmt.Errorf("failed to create alternative files directory: %w", err))
+		}
+		fmt.Printf("Using alternative files directory: %s\n", filesDir)
 	}
 
 	// Create database path
@@ -1311,23 +1319,30 @@ func main() {
 	} else {
 		dbFile.Close()
 		os.Remove(dbPath) // Remove empty file, let sqlstore create it properly
+		fmt.Printf("Database file creation test successful\n")
 	}
 
+	fmt.Printf("Initializing database container at: %s\n", dbPath)
 	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath), dbLog)
 	if err != nil {
 		panic(fmt.Errorf("failed to initialize database container: %w", err))
 	}
+	fmt.Printf("Database container initialized successfully\n")
 
 	// Initialize client manager
 	manager = NewClientManager(container)
 
 	// Load existing clients
+	fmt.Printf("Loading existing clients...\n")
 	err = loadExistingClients(container)
 	if err != nil {
 		fmt.Printf("Failed to load existing clients: %v\n", err)
+	} else {
+		fmt.Printf("Existing clients loaded successfully\n")
 	}
 
 	// Setup Gin router
+	fmt.Printf("Setting up Gin router...\n")
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
@@ -1337,6 +1352,7 @@ func main() {
 	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
 	r.Use(cors.New(config))
+	fmt.Printf("CORS configured\n")
 
 	// API routes
 	v1 := r.Group("/api/v1")
@@ -1371,14 +1387,17 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	fmt.Printf("Health check endpoint configured\n")
 
 	// Swagger documentation
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	fmt.Printf("Swagger documentation configured\n")
 
 	fmt.Println("Aimeow WhatsApp API Server starting on :7030")
 	fmt.Println("Swagger UI: http://localhost:7030/swagger/index.html")
 	fmt.Println("API Health: http://localhost:7030/health")
 	fmt.Println("Files: http://localhost:7030/files")
 
+	fmt.Printf("Starting HTTP server on port 7030...\n")
 	r.Run(":7030")
 }
