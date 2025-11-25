@@ -2,6 +2,11 @@
 
 REST API for managing multiple WhatsApp clients with Swagger documentation.
 
+## Latest Update: 2025-11-25
+- Enhanced Docker debugging and health checks
+- Added comprehensive message and image sending capabilities
+- Fixed deployment issues with improved error handling
+
 ## Quick Start
 
 ```bash
