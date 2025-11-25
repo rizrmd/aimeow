@@ -27,7 +27,7 @@ definitions:
     type: object
   main.CreateClientRequest:
     properties:
-      OSName:
+      osName:
         type: string
     type: object
   main.CreateClientResponse:
@@ -37,12 +37,65 @@ definitions:
       qrUrl:
         type: string
     type: object
+  main.ImageItem:
+    properties:
+      caption:
+        type: string
+      imageUrl:
+        type: string
+    required:
+    - imageUrl
+    type: object
   main.MessageResponse:
     properties:
       messages:
         items:
           type: string
         type: array
+    type: object
+  main.SendImageRequest:
+    properties:
+      caption:
+        type: string
+      imageUrl:
+        type: string
+      phone:
+        type: string
+    required:
+    - imageUrl
+    - phone
+    type: object
+  main.SendMessageRequest:
+    properties:
+      message:
+        type: string
+      phone:
+        type: string
+    required:
+    - message
+    - phone
+    type: object
+  main.SendMessageResponse:
+    properties:
+      error:
+        type: string
+      messageId:
+        type: string
+      success:
+        type: boolean
+    type: object
+  main.SendMultipleImagesRequest:
+    properties:
+      images:
+        items:
+          $ref: '#/definitions/main.ImageItem'
+        minItems: 1
+        type: array
+      phone:
+        type: string
+    required:
+    - images
+    - phone
     type: object
 host: localhost:7030
 info:
@@ -182,6 +235,141 @@ paths:
       summary: Get QR code for client (terminal format)
       tags:
       - clients
+  /clients/{id}/send-image:
+    post:
+      consumes:
+      - application/json
+      description: Sends an image to a WhatsApp number
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Image details
+        in: body
+        name: image
+        required: true
+        schema:
+          $ref: '#/definitions/main.SendImageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.SendMessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Send single image
+      tags:
+      - messages
+  /clients/{id}/send-images:
+    post:
+      consumes:
+      - application/json
+      description: Sends multiple images to a WhatsApp number
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Multiple image details
+        in: body
+        name: images
+        required: true
+        schema:
+          $ref: '#/definitions/main.SendMultipleImagesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.SendMessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Send multiple images
+      tags:
+      - messages
+  /clients/{id}/send-message:
+    post:
+      consumes:
+      - application/json
+      description: Sends a text message to a WhatsApp number
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Message details
+        in: body
+        name: message
+        required: true
+        schema:
+          $ref: '#/definitions/main.SendMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.SendMessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Send text message
+      tags:
+      - messages
   /clients/new:
     post:
       consumes:

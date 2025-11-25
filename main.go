@@ -20,10 +20,13 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 
 	// Swagger docs
 	_ "rizrmd/aimeow/docs"
@@ -203,6 +206,34 @@ type ConfigResponse struct {
 
 type MessageResponse struct {
 	Messages []string `json:"messages"`
+}
+
+// Request and Response structs for sending messages
+type SendMessageRequest struct {
+	Phone    string `json:"phone" binding:"required"`
+	Message  string `json:"message" binding:"required"`
+}
+
+type SendImageRequest struct {
+	Phone     string `json:"phone" binding:"required"`
+	ImageURL  string `json:"imageUrl" binding:"required,url"`
+	Caption   string `json:"caption,omitempty"`
+}
+
+type SendMultipleImagesRequest struct {
+	Phone     string `json:"phone" binding:"required"`
+	Images    []ImageItem `json:"images" binding:"required,min=1"`
+}
+
+type ImageItem struct {
+	ImageURL string `json:"imageUrl" binding:"required,url"`
+	Caption  string `json:"caption,omitempty"`
+}
+
+type SendMessageResponse struct {
+	Success   bool   `json:"success"`
+	MessageID string `json:"messageId,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // @Summary Create a new WhatsApp client
@@ -688,6 +719,306 @@ func deleteClient(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "client deleted successfully"})
 }
 
+// @Summary Send text message
+// @Description Sends a text message to a WhatsApp number
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param message body SendMessageRequest true "Message details"
+// @Success 200 {object} SendMessageResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /clients/{id}/send-message [post]
+func sendMessage(c *gin.Context) {
+	clientID := c.Param("id")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	var req SendMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Format phone number (remove @s.whatsapp.net if present, add if missing)
+	targetJID := strings.TrimSuffix(req.Phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	// Send message
+	msg := &waE2E.Message{
+		Conversation: &req.Message,
+	}
+
+	resp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, msg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to send message: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, SendMessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+	})
+}
+
+// @Summary Send single image
+// @Description Sends an image to a WhatsApp number
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param image body SendImageRequest true "Image details"
+// @Success 200 {object} SendMessageResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /clients/{id}/send-image [post]
+func sendImage(c *gin.Context) {
+	clientID := c.Param("id")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	var req SendImageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Format phone number
+	targetJID := strings.TrimSuffix(req.Phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	// Download image from URL
+	resp, err := http.Get(req.ImageURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to download image: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadRequest, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Image download failed with status: %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Read image data
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to read image data: %v", err),
+		})
+		return
+	}
+
+	// Upload image to WhatsApp
+	uploaded, err := waClient.client.Upload(context.Background(), imageData, whatsmeow.MediaImage)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to upload image to WhatsApp: %v", err),
+		})
+		return
+	}
+
+	// Create image message
+	imageMsg := &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			URL:           proto.String(uploaded.URL),
+			Mimetype:      proto.String(resp.Header.Get("Content-Type")),
+			Caption:       proto.String(req.Caption),
+			FileLength:    proto.Uint64(uint64(len(imageData))),
+			FileSHA256:    uploaded.FileSHA256,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			MediaKey:      uploaded.MediaKey,
+			DirectPath:    proto.String(uploaded.DirectPath),
+		},
+	}
+
+	// Send the image message
+	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, imageMsg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to send image: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, SendMessageResponse{
+		Success:   true,
+		MessageID: sendResp.ID,
+	})
+}
+
+// @Summary Send multiple images
+// @Description Sends multiple images to a WhatsApp number
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param images body SendMultipleImagesRequest true "Multiple image details"
+// @Success 200 {object} SendMessageResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /clients/{id}/send-images [post]
+func sendMultipleImages(c *gin.Context) {
+	clientID := c.Param("id")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	var req SendMultipleImagesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Format phone number
+	targetJID := strings.TrimSuffix(req.Phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	var messageIDs []string
+	var errors []string
+
+	// Send each image
+	for i, imageItem := range req.Images {
+		// Download image from URL
+		resp, err := http.Get(imageItem.ImageURL)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Image %d: Failed to download - %v", i+1, err))
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			errors = append(errors, fmt.Sprintf("Image %d: Download failed with status %d", i+1, resp.StatusCode))
+			continue
+		}
+
+		// Read image data
+		imageData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Image %d: Failed to read data - %v", i+1, err))
+			continue
+		}
+
+		// Upload image to WhatsApp
+		uploaded, err := waClient.client.Upload(context.Background(), imageData, whatsmeow.MediaImage)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Image %d: Upload failed - %v", i+1, err))
+			continue
+		}
+
+		// Create image message
+		imageMsg := &waE2E.Message{
+			ImageMessage: &waE2E.ImageMessage{
+				URL:           proto.String(uploaded.URL),
+				Mimetype:      proto.String(resp.Header.Get("Content-Type")),
+				Caption:       proto.String(imageItem.Caption),
+				FileLength:    proto.Uint64(uint64(len(imageData))),
+				FileSHA256:    uploaded.FileSHA256,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				MediaKey:      uploaded.MediaKey,
+				DirectPath:    proto.String(uploaded.DirectPath),
+			},
+		}
+
+		// Send the image message
+		sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, imageMsg)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Image %d: Send failed - %v", i+1, err))
+			continue
+		}
+
+		messageIDs = append(messageIDs, sendResp.ID)
+	}
+
+	// Prepare response
+	response := SendMessageResponse{
+		Success: len(messageIDs) > 0,
+	}
+
+	if len(messageIDs) > 0 {
+		response.MessageID = fmt.Sprintf("Sent %d images successfully. IDs: %s", len(messageIDs), strings.Join(messageIDs, ", "))
+	}
+
+	if len(errors) > 0 {
+		if response.Success {
+			response.Error = fmt.Sprintf("Partial success. Errors: %s", strings.Join(errors, "; "))
+		} else {
+			response.Error = fmt.Sprintf("All images failed. Errors: %s", strings.Join(errors, "; "))
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func (cm *ClientManager) sendWebhook(client *WhatsAppClient, message interface{}) {
 	if cm.callbackURL == "" {
 		return
@@ -1018,6 +1349,11 @@ func main() {
 			clients.GET("/:id/qr", getQRCode)
 			clients.GET("/:id/messages", getMessages)
 			clients.DELETE("/:id", deleteClient)
+
+			// Send message endpoints
+			clients.POST("/:id/send-message", sendMessage)
+			clients.POST("/:id/send-image", sendImage)
+			clients.POST("/:id/send-images", sendMultipleImages)
 		}
 
 		// Config endpoints
