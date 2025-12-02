@@ -38,8 +38,20 @@ import (
 // @title Aimeow WhatsApp Bot API
 // @version 1.0
 // @description A REST API for managing multiple WhatsApp clients
-// @host localhost:7030
 // @BasePath /api/v1
+
+// Helper function to get the base URL from the request
+func getBaseURL(c *gin.Context) string {
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := c.Request.Host
+	if forwardedHost := c.GetHeader("X-Forwarded-Host"); forwardedHost != "" {
+		host = forwardedHost
+	}
+	return fmt.Sprintf("%s://%s", scheme, host)
+}
 
 type WhatsAppClient struct {
 	client      *whatsmeow.Client
@@ -61,6 +73,7 @@ type ClientManager struct {
 }
 
 var manager *ClientManager
+var baseURL string // Base URL for generating file URLs in webhooks
 
 func NewClientManager(container *sqlstore.Container) *ClientManager {
 	return &ClientManager{
@@ -316,7 +329,7 @@ func createClient(c *gin.Context) {
 		}
 	}()
 
-	qrURL := fmt.Sprintf("http://localhost:7030/qr?client_id=%s", clientID)
+	qrURL := fmt.Sprintf("%s/qr?client_id=%s", getBaseURL(c), clientID)
 
 	c.JSON(http.StatusOK, CreateClientResponse{
 		ID:    clientID,
@@ -1235,7 +1248,7 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		client.mutex.RLock()
 		if _, exists := client.images[msg.Info.ID]; exists {
 			sanitizedClientID := strings.ReplaceAll(clientID, "@", "_")
-			messageData["fileUrl"] = fmt.Sprintf("http://localhost:7030/files/%s/%s", sanitizedClientID, msg.Info.ID)
+			messageData["fileUrl"] = fmt.Sprintf("%s/files/%s/%s", baseURL, sanitizedClientID, msg.Info.ID)
 		}
 		client.mutex.RUnlock()
 	}
@@ -1288,6 +1301,13 @@ func loadExistingClients(container *sqlstore.Container) error {
 
 func main() {
 	fmt.Println("Starting Aimeow WhatsApp API Server...")
+
+	// Initialize base URL from environment variable
+	baseURL = os.Getenv("BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:7030"
+	}
+	fmt.Printf("Base URL: %s\n", baseURL)
 
 	// Initialize database
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
@@ -1399,11 +1419,15 @@ func main() {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	fmt.Printf("Swagger documentation configured\n")
 
-	fmt.Println("Aimeow WhatsApp API Server starting on :7030")
-	fmt.Println("Swagger UI: http://localhost:7030/swagger/index.html")
-	fmt.Println("API Health: http://localhost:7030/health")
-	fmt.Println("Files: http://localhost:7030/files")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "7030"
+	}
+	fmt.Printf("Aimeow WhatsApp API Server starting on :%s\n", port)
+	fmt.Printf("Swagger UI: %s/swagger/index.html\n", baseURL)
+	fmt.Printf("API Health: %s/health\n", baseURL)
+	fmt.Printf("Files: %s/files\n", baseURL)
 
-	fmt.Printf("Starting HTTP server on port 7030...\n")
-	r.Run(":7030")
+	fmt.Printf("Starting HTTP server on port %s...\n", port)
+	r.Run(":" + port)
 }

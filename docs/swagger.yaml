@@ -97,7 +97,6 @@ definitions:
     - images
     - phone
     type: object
-host: localhost:7030
 info:
   contact: {}
   description: A REST API for managing multiple WhatsApp clients
