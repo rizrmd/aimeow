@@ -69,18 +69,81 @@ type ClientManager struct {
 	clients     map[string]*WhatsAppClient
 	container   *sqlstore.Container
 	callbackURL string
+	configPath  string // Path to configuration file
 	mutex       sync.RWMutex
+}
+
+// Config represents the persistent configuration
+type Config struct {
+	CallbackURL string `json:"callbackUrl"`
 }
 
 var manager *ClientManager
 var baseURL string // Base URL for generating file URLs in webhooks
 
-func NewClientManager(container *sqlstore.Container) *ClientManager {
-	return &ClientManager{
+func NewClientManager(container *sqlstore.Container, configPath string) *ClientManager {
+	cm := &ClientManager{
 		clients:     make(map[string]*WhatsAppClient),
 		container:   container,
 		callbackURL: "",
+		configPath:  configPath,
 	}
+	// Load configuration from file
+	if err := cm.loadConfig(); err != nil {
+		fmt.Printf("Failed to load config (will use defaults): %v\n", err)
+	}
+	return cm
+}
+
+// loadConfig loads configuration from JSON file
+func (cm *ClientManager) loadConfig() error {
+	data, err := os.ReadFile(cm.configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Config file doesn't exist yet, that's okay
+			return nil
+		}
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	cm.mutex.Lock()
+	cm.callbackURL = config.CallbackURL
+	cm.mutex.Unlock()
+
+	fmt.Printf("Configuration loaded: callbackURL=%s\n", config.CallbackURL)
+	return nil
+}
+
+// saveConfig saves configuration to JSON file
+func (cm *ClientManager) saveConfig() error {
+	cm.mutex.RLock()
+	config := Config{
+		CallbackURL: cm.callbackURL,
+	}
+	cm.mutex.RUnlock()
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Write to temp file first, then rename for atomic operation
+	tempPath := cm.configPath + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temp config file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, cm.configPath); err != nil {
+		return fmt.Errorf("failed to rename temp config file: %w", err)
+	}
+
+	fmt.Printf("Configuration saved to %s\n", cm.configPath)
+	return nil
 }
 
 func (cm *ClientManager) createClient(osName string) (*WhatsAppClient, string, error) {
@@ -386,6 +449,12 @@ func setConfig(c *gin.Context) {
 	manager.mutex.Lock()
 	manager.callbackURL = req.CallbackURL
 	manager.mutex.Unlock()
+
+	// Save configuration to persistent storage
+	if err := manager.saveConfig(); err != nil {
+		fmt.Printf("Warning: Failed to save config: %v\n", err)
+		// Don't fail the request, just log the warning
+	}
 
 	c.JSON(http.StatusOK, ConfigResponse{
 		CallbackURL: req.CallbackURL,
@@ -1349,8 +1418,10 @@ func main() {
 	}
 	fmt.Printf("Database container initialized successfully\n")
 
-	// Initialize client manager
-	manager = NewClientManager(container)
+	// Initialize client manager with config path
+	configPath := filepath.Join(filesDir, "config.json")
+	fmt.Printf("Configuration file path: %s\n", configPath)
+	manager = NewClientManager(container, configPath)
 
 	// Load existing clients
 	fmt.Printf("Loading existing clients...\n")
