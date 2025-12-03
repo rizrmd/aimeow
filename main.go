@@ -54,15 +54,17 @@ func getBaseURL(c *gin.Context) string {
 }
 
 type WhatsAppClient struct {
-	client      *whatsmeow.Client
-	deviceStore *store.Device
-	isConnected bool
-	qrCode      string
-	connectedAt *time.Time
-	messages    []string
-	images      map[string]string // image_id -> file_path
-	osName      string            // OS name to set after connection
-	mutex       sync.RWMutex
+	client        *whatsmeow.Client
+	deviceStore   *store.Device
+	isConnected   bool
+	qrCode        string
+	connectedAt   *time.Time
+	messages      []string
+	images        map[string]string // image_id -> file_path
+	osName        string            // OS name to set after connection
+	typingTimers  map[string]*time.Timer // chat_id -> typing timer
+	typingActive  map[string]bool        // chat_id -> is currently typing
+	mutex         sync.RWMutex
 }
 
 type ClientManager struct {
@@ -174,12 +176,14 @@ func (cm *ClientManager) createClient(osName string) (*WhatsAppClient, string, e
 	}
 
 	waClient := &WhatsAppClient{
-		client:      client,
-		deviceStore: deviceStore,
-		isConnected: false,
-		messages:    make([]string, 0),
-		images:      make(map[string]string),
-		osName:      osName, // Store OS name for later setting
+		client:       client,
+		deviceStore:  deviceStore,
+		isConnected:  false,
+		messages:     make([]string, 0),
+		images:       make(map[string]string),
+		osName:       osName, // Store OS name for later setting
+		typingTimers: make(map[string]*time.Timer),
+		typingActive: make(map[string]bool),
 	}
 
 	client.AddEventHandler(cm.eventHandler(waClient))
@@ -227,6 +231,24 @@ func (cm *ClientManager) eventHandler(client *WhatsAppClient) func(interface{}) 
 			if len(client.messages) > 100 { // Keep last 100 messages
 				client.messages = client.messages[1:]
 			}
+
+			// Mark message as read and start typing
+			if !v.Info.IsFromMe {
+				chatJID := v.Info.Chat
+				go func() {
+					// Mark as read
+					err := client.client.MarkRead(context.Background(), []types.MessageID{v.Info.ID}, v.Info.Timestamp, chatJID, v.Info.Sender)
+					if err != nil {
+						fmt.Printf("Failed to mark message as read: %v\n", err)
+					} else {
+						fmt.Printf("Marked message as read from %s\n", chatJID.String())
+					}
+
+					// Start typing indicator
+					cm.startTyping(client, chatJID)
+				}()
+			}
+
 			// Send webhook callback if configured
 			if cm.callbackURL != "" {
 				go cm.sendWebhook(client, v)
@@ -252,6 +274,63 @@ func (cm *ClientManager) eventHandler(client *WhatsAppClient) func(interface{}) 
 			client.qrCode = v.Codes[0]
 		}
 	}
+}
+
+// startTyping starts the typing indicator for a chat and sets up a 1-minute timeout
+func (cm *ClientManager) startTyping(client *WhatsAppClient, chatJID types.JID) {
+	chatID := chatJID.String()
+
+	client.mutex.Lock()
+	defer client.mutex.Unlock()
+
+	// If already typing for this chat, cancel the existing timer
+	if timer, exists := client.typingTimers[chatID]; exists && timer != nil {
+		timer.Stop()
+	}
+
+	// Send typing indicator
+	err := client.client.SendChatPresence(context.Background(), chatJID, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+	if err != nil {
+		fmt.Printf("Failed to send typing indicator: %v\n", err)
+		return
+	}
+
+	client.typingActive[chatID] = true
+	fmt.Printf("Started typing indicator for %s\n", chatID)
+
+	// Set up timer to stop typing after 1 minute
+	client.typingTimers[chatID] = time.AfterFunc(60*time.Second, func() {
+		cm.stopTyping(client, chatJID)
+	})
+}
+
+// stopTyping stops the typing indicator for a chat
+func (cm *ClientManager) stopTyping(client *WhatsAppClient, chatJID types.JID) {
+	chatID := chatJID.String()
+
+	client.mutex.Lock()
+	defer client.mutex.Unlock()
+
+	// Check if we're actually typing for this chat
+	if !client.typingActive[chatID] {
+		return
+	}
+
+	// Cancel timer if it exists
+	if timer, exists := client.typingTimers[chatID]; exists && timer != nil {
+		timer.Stop()
+		delete(client.typingTimers, chatID)
+	}
+
+	// Send stop typing indicator (paused)
+	err := client.client.SendChatPresence(context.Background(), chatJID, types.ChatPresencePaused, types.ChatPresenceMediaText)
+	if err != nil {
+		fmt.Printf("Failed to stop typing indicator: %v\n", err)
+	} else {
+		fmt.Printf("Stopped typing indicator for %s\n", chatID)
+	}
+
+	delete(client.typingActive, chatID)
 }
 
 // Response structs
@@ -846,6 +925,9 @@ func sendMessage(c *gin.Context) {
 		return
 	}
 
+	// Stop typing indicator before sending message
+	manager.stopTyping(waClient, targetJIDParsed)
+
 	// Send message
 	msg := &waE2E.Message{
 		Conversation: &req.Message,
@@ -964,6 +1046,9 @@ func sendImage(c *gin.Context) {
 		},
 	}
 
+	// Stop typing indicator before sending image
+	manager.stopTyping(waClient, targetJIDParsed)
+
 	// Send the image message
 	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, imageMsg)
 	if err != nil {
@@ -1024,6 +1109,9 @@ func sendMultipleImages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
 		return
 	}
+
+	// Stop typing indicator before sending images
+	manager.stopTyping(waClient, targetJIDParsed)
 
 	var messageIDs []string
 	var errors []string
@@ -1341,12 +1429,14 @@ func loadExistingClients(container *sqlstore.Container) error {
 		client := whatsmeow.NewClient(deviceStore, clientLog)
 
 		waClient := &WhatsAppClient{
-			client:      client,
-			deviceStore: deviceStore,
-			isConnected: false,
-			messages:    make([]string, 0),
-			images:      make(map[string]string),
-			osName:      "", // Empty for existing clients
+			client:       client,
+			deviceStore:  deviceStore,
+			isConnected:  false,
+			messages:     make([]string, 0),
+			images:       make(map[string]string),
+			osName:       "", // Empty for existing clients
+			typingTimers: make(map[string]*time.Timer),
+			typingActive: make(map[string]bool),
 		}
 
 		client.AddEventHandler(manager.eventHandler(waClient))
