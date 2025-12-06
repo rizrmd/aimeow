@@ -1203,6 +1203,9 @@ func (cm *ClientManager) sendWebhook(client *WhatsAppClient, message interface{}
 		return
 	}
 
+	// Log the webhook payload for debugging
+	fmt.Printf("[Aimeow Webhook] Payload: %s\n", string(jsonData))
+
 	resp, err := http.Post(cm.callbackURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Printf("Failed to send webhook: %v\n", err)
@@ -1212,6 +1215,8 @@ func (cm *ClientManager) sendWebhook(client *WhatsAppClient, message interface{}
 
 	if resp.StatusCode >= 400 {
 		fmt.Printf("Webhook returned error status: %d\n", resp.StatusCode)
+	} else {
+		fmt.Printf("[Aimeow Webhook] Successfully sent to %s (status: %d)\n", cm.callbackURL, resp.StatusCode)
 	}
 }
 
@@ -1369,9 +1374,26 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
+	// Extract sender - use Chat for individual chats, Sender for group chats
+	var fromUser string
+	if msg.Info.Chat.Server == types.DefaultUserServer {
+		// Individual chat - use Chat.User which is more reliable
+		fromUser = msg.Info.Chat.User
+	} else if msg.Info.Chat.Server == types.GroupServer {
+		// Group chat - use Sender.User to identify who sent the message
+		fromUser = msg.Info.Sender.User
+	} else {
+		// Fallback to Sender.User for other cases
+		fromUser = msg.Info.Sender.User
+	}
+
+	// Debug logging to help diagnose issues
+	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s Using=%s\n",
+		msg.Info.Chat.String(), msg.Info.Sender.String(), fromUser)
+
 	messageData := map[string]interface{}{
 		"id":        msg.Info.ID,
-		"from":      msg.Info.Sender.User,
+		"from":      fromUser,
 		"timestamp": msg.Info.Timestamp,
 		"pushName":  msg.Info.PushName,
 	}
