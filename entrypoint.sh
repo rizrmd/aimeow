@@ -2,9 +2,8 @@
 
 echo "Entrypoint script starting..."
 
-# Create subdirectories within files for application data
-echo "Creating directories..."
-mkdir -p /app/files/sessions /app/files/media /app/files/qrcodes
+# Note: Directories are created by the Go application as needed
+# No need to pre-create them here to avoid permission issues with mounted volumes
 
 # Check if binary exists
 if [ ! -f "./aimeow" ]; then
