@@ -68,11 +68,13 @@ type WhatsAppClient struct {
 }
 
 type ClientManager struct {
-	clients     map[string]*WhatsAppClient
-	container   *sqlstore.Container
-	callbackURL string
-	configPath  string // Path to configuration file
-	mutex       sync.RWMutex
+	clients       map[string]*WhatsAppClient
+	container     *sqlstore.Container
+	callbackURL   string
+	configPath    string            // Path to configuration file
+	clientIDMap   map[string]string // Maps WhatsApp device ID -> UUID
+	clientMapPath string            // Path to client ID mapping file
+	mutex         sync.RWMutex
 }
 
 // Config represents the persistent configuration
@@ -80,19 +82,34 @@ type Config struct {
 	CallbackURL string `json:"callbackUrl"`
 }
 
+// ClientIDMapping represents the persistent mapping of WhatsApp IDs to UUIDs
+type ClientIDMapping struct {
+	Mappings map[string]string `json:"mappings"` // WhatsApp device ID -> UUID
+}
+
 var manager *ClientManager
 var baseURL string // Base URL for generating file URLs in webhooks
 
 func NewClientManager(container *sqlstore.Container, configPath string) *ClientManager {
+	// Derive client map path from config path
+	configDir := filepath.Dir(configPath)
+	clientMapPath := filepath.Join(configDir, "client_mappings.json")
+
 	cm := &ClientManager{
-		clients:     make(map[string]*WhatsAppClient),
-		container:   container,
-		callbackURL: "",
-		configPath:  configPath,
+		clients:       make(map[string]*WhatsAppClient),
+		container:     container,
+		callbackURL:   "",
+		configPath:    configPath,
+		clientIDMap:   make(map[string]string),
+		clientMapPath: clientMapPath,
 	}
 	// Load configuration from file
 	if err := cm.loadConfig(); err != nil {
 		fmt.Printf("Failed to load config (will use defaults): %v\n", err)
+	}
+	// Load client ID mappings
+	if err := cm.loadClientMappings(); err != nil {
+		fmt.Printf("Failed to load client mappings (will use defaults): %v\n", err)
 	}
 	return cm
 }
@@ -145,6 +162,60 @@ func (cm *ClientManager) saveConfig() error {
 	}
 
 	fmt.Printf("Configuration saved to %s\n", cm.configPath)
+	return nil
+}
+
+// loadClientMappings loads client ID mappings from JSON file
+func (cm *ClientManager) loadClientMappings() error {
+	data, err := os.ReadFile(cm.clientMapPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Mapping file doesn't exist yet, that's okay
+			return nil
+		}
+		return fmt.Errorf("failed to read client mappings file: %w", err)
+	}
+
+	var mapping ClientIDMapping
+	if err := json.Unmarshal(data, &mapping); err != nil {
+		return fmt.Errorf("failed to parse client mappings file: %w", err)
+	}
+
+	cm.mutex.Lock()
+	cm.clientIDMap = mapping.Mappings
+	if cm.clientIDMap == nil {
+		cm.clientIDMap = make(map[string]string)
+	}
+	cm.mutex.Unlock()
+
+	fmt.Printf("Client mappings loaded: %d mappings\n", len(mapping.Mappings))
+	return nil
+}
+
+// saveClientMappings saves client ID mappings to JSON file
+func (cm *ClientManager) saveClientMappings() error {
+	cm.mutex.RLock()
+	mapping := ClientIDMapping{
+		Mappings: cm.clientIDMap,
+	}
+	cm.mutex.RUnlock()
+
+	data, err := json.MarshalIndent(mapping, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal client mappings: %w", err)
+	}
+
+	// Write to temp file first, then rename for atomic operation
+	tempPath := cm.clientMapPath + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temp client mappings file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, cm.clientMapPath); err != nil {
+		return fmt.Errorf("failed to rename temp client mappings file: %w", err)
+	}
+
+	fmt.Printf("Client mappings saved to %s\n", cm.clientMapPath)
 	return nil
 }
 
@@ -267,6 +338,33 @@ func (cm *ClientManager) eventHandler(client *WhatsAppClient) func(interface{}) 
 			// Set OS name if provided and device has JID
 			if client.osName != "" && client.deviceStore.ID != nil {
 				store.DeviceProps.Os = &client.osName
+			}
+
+			// Save the mapping from WhatsApp device ID to our UUID
+			// Find our UUID for this client by searching through manager.clients
+			if client.deviceStore.ID != nil {
+				whatsappID := client.deviceStore.ID.String()
+				cm.mutex.Lock()
+				// Find the UUID key for this client
+				var ourUUID string
+				for uuid, c := range cm.clients {
+					if c == client {
+						ourUUID = uuid
+						break
+					}
+				}
+				if ourUUID != "" {
+					cm.clientIDMap[whatsappID] = ourUUID
+					cm.mutex.Unlock()
+					// Save mappings to disk
+					if err := cm.saveClientMappings(); err != nil {
+						fmt.Printf("Warning: Failed to save client mappings: %v\n", err)
+					} else {
+						fmt.Printf("Saved client mapping: %s -> %s\n", whatsappID, ourUUID)
+					}
+				} else {
+					cm.mutex.Unlock()
+				}
 			}
 		case *events.LoggedOut:
 			client.isConnected = false
@@ -571,9 +669,7 @@ func getClientFile(c *gin.Context) {
 	clientID := c.Param("client_id")
 	fileID := c.Param("file_id")
 
-	// Sanitize client ID (convert back from filename format)
-	clientID = strings.ReplaceAll(clientID, "_", "@")
-
+	// ClientID is now a UUID, no need to sanitize
 	waClient, err := manager.getClient(clientID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "client not found"})
@@ -1235,13 +1331,24 @@ func (cm *ClientManager) downloadImage(client *WhatsAppClient, message interface
 
 	fmt.Printf("Media detected in message, proceeding with download\n")
 
-	// Create client directory if it doesn't exist
-	clientID := client.deviceStore.ID.String()
-	if clientID == "" {
+	// Get the UUID for this client
+	whatsappID := client.deviceStore.ID.String()
+	if whatsappID == "" {
 		return
 	}
 
-	clientDir := filepath.Join("files", strings.ReplaceAll(clientID, "@", "_"))
+	cm.mutex.RLock()
+	clientID, exists := cm.clientIDMap[whatsappID]
+	cm.mutex.RUnlock()
+
+	// Fallback to WhatsApp ID if mapping doesn't exist
+	if !exists {
+		clientID = whatsappID
+		fmt.Printf("Warning: No UUID mapping found for client %s\n", whatsappID)
+	}
+
+	// Create client directory using UUID (no need to sanitize since UUIDs don't have special chars)
+	clientDir := filepath.Join("files", clientID)
 	err := os.MkdirAll(clientDir, 0755)
 	if err != nil {
 		fmt.Printf("Failed to create client directory: %v\n", err)
@@ -1360,7 +1467,17 @@ func (cm *ClientManager) downloadImage(client *WhatsAppClient, message interface
 }
 
 func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message interface{}) map[string]interface{} {
-	clientID := client.deviceStore.ID.String()
+	// Get the UUID for this client by looking up the WhatsApp ID in our mapping
+	whatsappID := client.deviceStore.ID.String()
+	cm.mutex.RLock()
+	clientID, exists := cm.clientIDMap[whatsappID]
+	cm.mutex.RUnlock()
+
+	// Fallback to WhatsApp ID if mapping doesn't exist (shouldn't happen)
+	if !exists {
+		clientID = whatsappID
+		fmt.Printf("Warning: No UUID mapping found for client %s\n", whatsappID)
+	}
 
 	// Type assert to get actual message struct
 	msg, ok := message.(*events.Message)
@@ -1426,8 +1543,8 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 	if messageData["type"] != "text" {
 		client.mutex.RLock()
 		if _, exists := client.images[msg.Info.ID]; exists {
-			sanitizedClientID := strings.ReplaceAll(clientID, "@", "_")
-			messageData["fileUrl"] = fmt.Sprintf("%s/files/%s/%s", baseURL, sanitizedClientID, msg.Info.ID)
+			// Use clientID directly (it's already a UUID, no need to sanitize)
+			messageData["fileUrl"] = fmt.Sprintf("%s/files/%s/%s", baseURL, clientID, msg.Info.ID)
 		}
 		client.mutex.RUnlock()
 	}
@@ -1463,15 +1580,35 @@ func loadExistingClients(container *sqlstore.Container) error {
 
 		client.AddEventHandler(manager.eventHandler(waClient))
 
-		clientID := deviceStore.ID.String()
+		// Use UUID from mapping if available, otherwise generate deterministic UUID from WhatsApp ID
+		whatsappID := deviceStore.ID.String()
+		manager.mutex.Lock()
+		clientID, exists := manager.clientIDMap[whatsappID]
+		if !exists {
+			// Generate a new UUID for existing clients that don't have a mapping yet
+			clientUUID := uuid.New()
+			clientID = clientUUID.String()
+			manager.clientIDMap[whatsappID] = clientID
+			fmt.Printf("Generated new UUID for existing client %s: %s\n", whatsappID, clientID)
+			// Save the new mapping
+			manager.mutex.Unlock()
+			if err := manager.saveClientMappings(); err != nil {
+				fmt.Printf("Warning: Failed to save client mappings: %v\n", err)
+			}
+			manager.mutex.Lock()
+		} else {
+			fmt.Printf("Using existing UUID for client %s: %s\n", whatsappID, clientID)
+		}
 		manager.clients[clientID] = waClient
+		manager.mutex.Unlock()
 
 		// Auto-connect if device has existing session
 		if client.Store.ID != nil {
+			localClientID := clientID // Capture for closure
 			go func() {
 				err := client.Connect()
 				if err != nil {
-					fmt.Printf("Failed to reconnect client %s: %v\n", clientID, err)
+					fmt.Printf("Failed to reconnect client %s: %v\n", localClientID, err)
 				}
 			}()
 		}
