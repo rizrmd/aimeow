@@ -9,6 +9,7 @@ REST API for managing multiple WhatsApp clients with Swagger documentation.
 
 ## Quick Start
 
+### Local Development
 ```bash
 # Build and run
 go run main.go
@@ -18,13 +19,40 @@ go build -o aimeow .
 ./aimeow
 ```
 
+### Docker
+
+```bash
+# Build the Docker image
+docker build -t aimeow .
+
+# Run with proper volume permissions
+docker run -d \
+  -p 7030:7030 \
+  -v $(pwd)/data:/app/files \
+  --name aimeow \
+  aimeow
+
+# IMPORTANT: Fix volume permissions if you get permission errors
+# The container runs as user 1001:1001 for security
+# If you see "permission denied" errors, run:
+sudo chown -R 1001:1001 ./data
+
+# Or run with matching user ID:
+docker run -d \
+  -p 7030:7030 \
+  -v $(pwd)/data:/app/files \
+  --user $(id -u):$(id -g) \
+  --name aimeow \
+  aimeow
+```
+
 ## API Endpoints
 
-Base URL: `http://localhost:8080/api/v1`
+Base URL: `http://localhost:7030/api/v1`
 
 ### Clients
 
-- `POST /clients` - Create new WhatsApp client
+- `POST /clients/new` - Create new WhatsApp client
 - `GET /clients` - List all clients
 - `GET /clients/{id}` - Get client details
 - `GET /clients/{id}/qr` - Get QR code (terminal format)
@@ -33,36 +61,53 @@ Base URL: `http://localhost:8080/api/v1`
 
 ### Documentation
 
-- Swagger UI: http://localhost:8080/swagger/index.html
-- Health check: http://localhost:8080/health
+- Swagger UI: http://localhost:7030/swagger/index.html
+- Health check: http://localhost:7030/health
+- QR Code: http://localhost:7030/qr?client_id=YOUR_CLIENT_ID
 
 ## Usage Examples
 
 ### Create a new client
 ```bash
-curl -X POST http://localhost:8080/api/v1/clients
+curl -X POST http://localhost:7030/api/v1/clients/new
 ```
 Response:
 ```json
 {
-  "id": "12345678-1234-1234-1234-123456789abc",
-  "qrCode": "2@abc123..."
+  "id": "75335d94-c1bb-4d11-a42c-fb24f2e02d5d",
+  "qrUrl": "http://localhost:7030/qr?client_id=75335d94-c1bb-4d11-a42c-fb24f2e02d5d"
 }
 ```
 
-### Get QR code for pairing
+### Get QR code for pairing (HTML)
 ```bash
-curl http://localhost:8080/api/v1/clients/12345678-1234-1234-1234-123456789abc/qr
+# Open in browser
+open http://localhost:7030/qr?client_id=75335d94-c1bb-4d11-a42c-fb24f2e02d5d
+
+# Or get terminal format
+curl http://localhost:7030/api/v1/clients/75335d94-c1bb-4d11-a42c-fb24f2e02d5d/qr
 ```
 
 ### List all clients
 ```bash
-curl http://localhost:8080/api/v1/clients
+curl http://localhost:7030/api/v1/clients
+```
+Response includes phone number once connected:
+```json
+[
+  {
+    "id": "75335d94-c1bb-4d11-a42c-fb24f2e02d5d",
+    "phone": "1234567890",
+    "isConnected": true,
+    "connectedAt": "2024-12-07T14:30:00Z",
+    "messageCount": 5
+  }
+]
 ```
 
 ### Get messages
 ```bash
-curl http://localhost:8080/api/v1/clients/12345678-1234-1234-1234-123456789abc/messages?limit=10
+curl http://localhost:7030/api/v1/clients/75335d94-c1bb-4d11-a42c-fb24f2e02d5d/messages?limit=10
 ```
 
 ## Features
