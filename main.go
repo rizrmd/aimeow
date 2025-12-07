@@ -542,34 +542,6 @@ func createClient(c *gin.Context) {
 		}
 	}()
 
-	// Start connection process
-	go func() {
-		qrChan, err := waClient.client.GetQRChannel(context.Background())
-		if err != nil {
-			fmt.Printf("Failed to get QR channel: %v\n", err)
-			return
-		}
-
-		err = waClient.client.Connect()
-		if err != nil {
-			fmt.Printf("Failed to connect client: %v\n", err)
-			return
-		}
-
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				waClient.mutex.Lock()
-				waClient.qrCode = evt.Code
-				waClient.mutex.Unlock()
-				clientID := ""
-				if waClient.deviceStore.ID != nil {
-					clientID = waClient.deviceStore.ID.String()
-				}
-				fmt.Printf("QR code generated for client %s\n", clientID)
-			}
-		}
-	}()
-
 	qrURL := fmt.Sprintf("%s/qr?client_id=%s", getBaseURL(c), clientID)
 
 	c.JSON(http.StatusOK, CreateClientResponse{
