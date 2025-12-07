@@ -434,6 +434,7 @@ func (cm *ClientManager) stopTyping(client *WhatsAppClient, chatJID types.JID) {
 // Response structs
 type ClientResponse struct {
 	ID           string     `json:"id"`
+	Phone        string     `json:"phone,omitempty"`
 	IsConnected  bool       `json:"isConnected"`
 	QRCode       string     `json:"qrCode,omitempty"`
 	ConnectedAt  *time.Time `json:"connectedAt,omitempty"`
@@ -597,6 +598,10 @@ func getAllClients(c *gin.Context) {
 			ConnectedAt:  client.connectedAt,
 			MessageCount: len(client.messages),
 		}
+		// Add phone number if device is connected
+		if client.deviceStore != nil && client.deviceStore.ID != nil {
+			resp.Phone = client.deviceStore.ID.User
+		}
 		if resp.QRCode == "" {
 			resp.QRCode = "not_available"
 		}
@@ -714,6 +719,10 @@ func getClient(c *gin.Context) {
 		QRCode:       waClient.qrCode,
 		ConnectedAt:  waClient.connectedAt,
 		MessageCount: len(waClient.messages),
+	}
+	// Add phone number if device is connected
+	if waClient.deviceStore != nil && waClient.deviceStore.ID != nil {
+		resp.Phone = waClient.deviceStore.ID.User
 	}
 	if resp.QRCode == "" {
 		resp.QRCode = "not_available"
