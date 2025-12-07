@@ -220,31 +220,19 @@ func (cm *ClientManager) saveClientMappings() error {
 }
 
 func (cm *ClientManager) createClient(osName string) (*WhatsAppClient, string, error) {
-	fmt.Printf("=== createClient called with osName: %s ===\n", osName)
 	// Generate a UUID-based client ID that we'll use consistently
 	clientUUID := uuid.New()
 	clientID := clientUUID.String()
-	fmt.Printf("Generated clientID: %s\n", clientID)
 
 	// Create a device store with proper initialization but don't save to database yet
-	fmt.Printf("Creating device store for client %s\n", clientID)
 	deviceStore := cm.container.NewDevice()
 	if deviceStore == nil {
 		return nil, "", fmt.Errorf("failed to create new device: container returned nil")
 	}
-	fmt.Printf("Successfully created device store for client %s\n", clientID)
 
 	clientLog := waLog.Stdout("Client", "DEBUG", true)
-	fmt.Printf("About to create whatsmeow client for %s\n", clientID)
 	client := whatsmeow.NewClient(deviceStore, clientLog)
-	fmt.Printf("Successfully created whatsmeow client for %s\n", clientID)
-
-	// Set OS name if provided before connection
-	if osName != "" {
-		fmt.Printf("Setting OS name '%s' for client before connection\n", osName)
-		// The OS name should be set through the client's device store
-		// This might be used during the initial registration/pairing process
-	}
+	fmt.Printf("Created new client: %s\n", clientID)
 
 	waClient := &WhatsAppClient{
 		client:       client,
@@ -500,7 +488,6 @@ type SendMessageResponse struct {
 // @Failure 500 {object} map[string]string
 // @Router /clients/new [post]
 func createClient(c *gin.Context) {
-	fmt.Printf("=== createClient API endpoint called ===\n")
 	var req CreateClientRequest
 
 	// Parse request body (empty body is also allowed)
@@ -508,11 +495,8 @@ func createClient(c *gin.Context) {
 		// If binding fails due to empty body, use empty struct
 		req = CreateClientRequest{}
 	}
-	fmt.Printf("Request parsed. OSName: '%s'\n", req.OSName)
 
-	fmt.Printf("About to call manager.createClient...\n")
 	waClient, clientID, err := manager.createClient(req.OSName)
-	fmt.Printf("manager.createClient returned. err: %v\n", err)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -537,7 +521,6 @@ func createClient(c *gin.Context) {
 				waClient.mutex.Lock()
 				waClient.qrCode = evt.Code
 				waClient.mutex.Unlock()
-				fmt.Printf("QR code generated for client %s\n", clientID)
 			}
 		}
 	}()
