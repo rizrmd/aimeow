@@ -1455,10 +1455,15 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
-	// Extract sender - use Chat for individual chats, Sender for group chats
+	// Extract sender - prioritize SenderAlt for LID contacts
 	var fromUser string
-	if msg.Info.Chat.Server == types.DefaultUserServer {
-		// Individual chat - use Chat.User which is more reliable
+
+	// Check if SenderAlt is populated (for LID contacts, this contains the actual phone number)
+	if msg.Info.SenderAlt.User != "" {
+		fromUser = msg.Info.SenderAlt.User
+		fmt.Printf("[Webhook Debug] Using SenderAlt (LID contact): %s\n", msg.Info.SenderAlt.String())
+	} else if msg.Info.Chat.Server == types.DefaultUserServer {
+		// Individual chat - use Chat.User
 		fromUser = msg.Info.Chat.User
 	} else if msg.Info.Chat.Server == types.GroupServer {
 		// Group chat - use Sender.User to identify who sent the message
@@ -1469,8 +1474,8 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 	}
 
 	// Debug logging to help diagnose issues
-	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s Using=%s\n",
-		msg.Info.Chat.String(), msg.Info.Sender.String(), fromUser)
+	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s SenderAlt=%s Using=%s\n",
+		msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.SenderAlt.String(), fromUser)
 
 	messageData := map[string]interface{}{
 		"id":        msg.Info.ID,
