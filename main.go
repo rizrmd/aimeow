@@ -1532,7 +1532,10 @@ func loadExistingClients(container *sqlstore.Container) error {
 		return fmt.Errorf("failed to get existing devices: %w", err)
 	}
 
-	for _, deviceStore := range devices {
+	fmt.Printf("Found %d existing device(s) in database\n", len(devices))
+
+	for i, deviceStore := range devices {
+		fmt.Printf("Loading device %d/%d: ID=%v\n", i+1, len(devices), deviceStore.ID)
 		clientLog := waLog.Stdout("Client", "DEBUG", true)
 		client := whatsmeow.NewClient(deviceStore, clientLog)
 
@@ -1573,16 +1576,22 @@ func loadExistingClients(container *sqlstore.Container) error {
 
 		// Auto-connect if device has existing session
 		if client.Store.ID != nil {
+			fmt.Printf("Attempting to auto-reconnect client %s (Device ID: %s)\n", clientID, client.Store.ID.String())
 			localClientID := clientID // Capture for closure
 			go func() {
 				err := client.Connect()
 				if err != nil {
 					fmt.Printf("Failed to reconnect client %s: %v\n", localClientID, err)
+				} else {
+					fmt.Printf("Successfully reconnected client %s\n", localClientID)
 				}
 			}()
+		} else {
+			fmt.Printf("Skipping auto-connect for client %s (no device ID)\n", clientID)
 		}
 	}
 
+	fmt.Printf("Finished loading %d existing client(s)\n", len(devices))
 	return nil
 }
 
