@@ -1625,17 +1625,22 @@ func main() {
 	dbPath := filepath.Join(filesDir, "aimeow.db")
 	fmt.Printf("Database path: %s\n", dbPath)
 
-	// Try to create the database file to check permissions
-	dbFile, err := os.Create(dbPath)
-	if err != nil {
-		fmt.Printf("Warning: Cannot create database file: %v\n", err)
-		// Try alternative location in /tmp
-		dbPath = "/tmp/aimeow.db"
-		fmt.Printf("Using fallback database path: %s\n", dbPath)
+	// Check if database file exists
+	if _, err := os.Stat(dbPath); err == nil {
+		fmt.Printf("Database file already exists: %s\n", dbPath)
 	} else {
-		dbFile.Close()
-		os.Remove(dbPath) // Remove empty file, let sqlstore create it properly
-		fmt.Printf("Database file creation test successful\n")
+		// Database doesn't exist, test if we can create it
+		dbFile, err := os.Create(dbPath)
+		if err != nil {
+			fmt.Printf("Warning: Cannot create database file: %v\n", err)
+			// Try alternative location in /tmp
+			dbPath = "/tmp/aimeow.db"
+			fmt.Printf("Using fallback database path: %s\n", dbPath)
+		} else {
+			dbFile.Close()
+			os.Remove(dbPath) // Remove empty test file, let sqlstore create it properly
+			fmt.Printf("Database file creation test successful\n")
+		}
 	}
 
 	fmt.Printf("Initializing database container at: %s\n", dbPath)
