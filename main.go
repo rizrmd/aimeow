@@ -1455,21 +1455,18 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
-	// Extract sender - prioritize SenderAlt for LID contacts
+	// Extract sender - use the actual phone number from Chat or Sender
+	// Note: SenderAlt contains LID (Lidded Identity), NOT the phone number
 	var fromUser string
 
-	// Check if SenderAlt is populated (for LID contacts, this contains the actual phone number)
-	if msg.Info.SenderAlt.User != "" {
-		fromUser = msg.Info.SenderAlt.User
-		fmt.Printf("[Webhook Debug] Using SenderAlt (LID contact): %s\n", msg.Info.SenderAlt.String())
-	} else if msg.Info.Chat.Server == types.DefaultUserServer {
-		// Individual chat - use Chat.User
+	if msg.Info.Chat.Server == types.DefaultUserServer {
+		// Individual chat - use Chat.User (the actual phone number)
 		fromUser = msg.Info.Chat.User
 	} else if msg.Info.Chat.Server == types.GroupServer {
 		// Group chat - use Sender.User to identify who sent the message
 		fromUser = msg.Info.Sender.User
 	} else {
-		// Fallback to Sender.User for other cases
+		// For other cases (e.g., status@broadcast) - use Sender.User
 		fromUser = msg.Info.Sender.User
 	}
 
