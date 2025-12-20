@@ -1455,11 +1455,15 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
-	// Extract sender - use the actual phone number from Chat or Sender
-	// Note: SenderAlt contains LID (Lidded Identity), NOT the phone number
+	// Extract sender - prioritize SenderAlt for LID contacts
+	// For LID (Lidded Identity) contacts, SenderAlt contains the actual phone number
+	// while Chat.User and Sender.User contain the LID identifier
 	var fromUser string
 
-	if msg.Info.Chat.Server == types.DefaultUserServer {
+	if msg.Info.SenderAlt.User != "" {
+		// SenderAlt contains the actual phone number for LID contacts
+		fromUser = msg.Info.SenderAlt.User
+	} else if msg.Info.Chat.Server == types.DefaultUserServer {
 		// Individual chat - use Chat.User (the actual phone number)
 		fromUser = msg.Info.Chat.User
 	} else if msg.Info.Chat.Server == types.GroupServer {
