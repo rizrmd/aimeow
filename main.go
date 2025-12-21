@@ -291,6 +291,27 @@ func (cm *ClientManager) eventHandler(client *WhatsAppClient) func(interface{}) 
 				client.messages = client.messages[1:]
 			}
 
+			// Store LID to phone number mapping using whatsmeow's built-in method
+			if v.Info.SenderAlt.User != "" && (v.Info.Chat.User != "" || v.Info.Sender.User != "") {
+				var lidJID types.JID
+				var phoneJID types.JID
+
+				// Identify LID and phone JIDs
+				if strings.Contains(v.Info.Chat.String(), "@lid") {
+					lidJID = v.Info.Chat
+					phoneJID = v.Info.SenderAlt
+				} else if strings.Contains(v.Info.Sender.String(), "@lid") {
+					lidJID = v.Info.Sender
+					phoneJID = v.Info.SenderAlt
+				}
+
+				if lidJID.User != "" && phoneJID.User != "" {
+					// Use whatsmeow's built-in LID to phone number mapping
+					client.client.StoreLIDPNMapping(context.Background(), lidJID, phoneJID)
+					fmt.Printf("[LID Mapping] Stored mapping using whatsmeow: %s -> %s\n", lidJID.String(), phoneJID.String())
+				}
+			}
+
 			// Mark message as read and start typing
 			if !v.Info.IsFromMe {
 				chatJID := v.Info.Chat
@@ -1455,23 +1476,63 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
-	// Extract sender - prioritize SenderAlt for LID contacts
+	// Extract sender - prioritize actual phone number for LID contacts
 	// For LID (Lidded Identity) contacts, SenderAlt contains the actual phone number
 	// while Chat.User and Sender.User contain the LID identifier
 	var fromUser string
 
+	// First try to get the actual phone number from SenderAlt
 	if msg.Info.SenderAlt.User != "" {
 		// SenderAlt contains the actual phone number for LID contacts
 		fromUser = msg.Info.SenderAlt.User
-	} else if msg.Info.Chat.Server == types.DefaultUserServer {
-		// Individual chat - use Chat.User (the actual phone number)
-		fromUser = msg.Info.Chat.User
-	} else if msg.Info.Chat.Server == types.GroupServer {
-		// Group chat - use Sender.User to identify who sent the message
-		fromUser = msg.Info.Sender.User
 	} else {
-		// For other cases (e.g., status@broadcast) - use Sender.User
-		fromUser = msg.Info.Sender.User
+		// SenderAlt is empty, try to lookup LID using whatsmeow's GetUserInfo
+		var potentialLIDs []types.JID
+
+		// Collect potential LID JIDs
+		if strings.Contains(msg.Info.Chat.String(), "@lid") {
+			potentialLIDs = append(potentialLIDs, msg.Info.Chat)
+		}
+		if strings.Contains(msg.Info.Sender.String(), "@lid") && msg.Info.Sender.String() != msg.Info.Chat.String() {
+			potentialLIDs = append(potentialLIDs, msg.Info.Sender)
+		}
+
+		// Try to resolve LID to phone number using device store
+		// The device store should have persistent LID to phone number mappings
+		if len(potentialLIDs) > 0 {
+			for _, lidJID := range potentialLIDs {
+				// Check if device store has this LID mapped to a phone number using GetAltJID
+				if altJID, err := client.deviceStore.GetAltJID(context.Background(), lidJID); err == nil && altJID.User != "" {
+					fromUser = altJID.User
+					fmt.Printf("[LID Lookup] Found phone via DeviceStore.GetAltJID: %s -> %s\n", lidJID.String(), altJID.String())
+					break
+				}
+
+				// Also try GetUserInfo as fallback
+				userInfoMap, err := client.client.GetUserInfo(context.Background(), []types.JID{lidJID})
+				if err == nil {
+					if userInfo, exists := userInfoMap[lidJID]; exists && userInfo.LID.User != "" && userInfo.LID.User != lidJID.User {
+						fromUser = userInfo.LID.User
+						fmt.Printf("[LID Lookup] Found phone via GetUserInfo: %s -> %s\n", lidJID.String(), fromUser)
+						break
+					}
+				}
+			}
+		}
+
+		// If still no phone number, fall back to original logic
+		if fromUser == "" {
+			if msg.Info.Chat.Server == types.DefaultUserServer {
+				// Individual chat - use Chat.User (the actual phone number or LID)
+				fromUser = msg.Info.Chat.User
+			} else if msg.Info.Chat.Server == types.GroupServer {
+				// Group chat - use Sender.User to identify who sent the message
+				fromUser = msg.Info.Sender.User
+			} else {
+				// For other cases (e.g., status@broadcast) - use Sender.User
+				fromUser = msg.Info.Sender.User
+			}
+		}
 	}
 
 	// Debug logging to help diagnose issues
