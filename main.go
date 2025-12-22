@@ -329,15 +329,18 @@ func (cm *ClientManager) eventHandler(client *WhatsAppClient) func(interface{}) 
 				}()
 			}
 
-			// Send webhook callback if configured
-			if cm.callbackURL != "" {
-				go cm.sendWebhook(client, v)
+			// Download media first if message contains media (synchronous to ensure fileUrl is available)
+			if v.Message.GetImageMessage() != nil || v.Message.GetVideoMessage() != nil || v.Message.GetAudioMessage() != nil || v.Message.GetDocumentMessage() != nil {
+				fmt.Printf("Media message detected for client %s, downloading before webhook...\n", client.deviceStore.ID.String())
+				// Release mutex during download to avoid blocking other operations
+				client.mutex.Unlock()
+				cm.downloadImage(client, v)
+				client.mutex.Lock()
 			}
 
-			// Download media if message contains media
-			if v.Message.GetImageMessage() != nil || v.Message.GetVideoMessage() != nil || v.Message.GetAudioMessage() != nil || v.Message.GetDocumentMessage() != nil {
-				fmt.Printf("Media message detected for client %s\n", client.deviceStore.ID.String())
-				go cm.downloadImage(client, v)
+			// Send webhook callback if configured (now includes fileUrl for media messages)
+			if cm.callbackURL != "" {
+				go cm.sendWebhook(client, v)
 			}
 		case *events.Connected:
 			client.isConnected = true
