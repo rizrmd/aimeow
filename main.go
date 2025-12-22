@@ -1344,19 +1344,15 @@ func (cm *ClientManager) downloadImage(client *WhatsAppClient, message interface
 	}
 
 	var fileExtension string
-	var downloadURL string
 	var mediaType string
+	var mediaData []byte
 
-	// Handle different media types
+	// Handle different media types using whatsmeow Download (handles decryption)
 	switch {
 	case msg.Message.GetImageMessage() != nil:
-		// Handle image
 		imageMsg := msg.Message.GetImageMessage()
-		if imageMsg.GetDirectPath() == "" {
-			return
-		}
 		mediaType = "image"
-		fileExtension = ".jpg" // Default for images
+		fileExtension = ".jpg"
 		if imageMsg.GetMimetype() == "image/png" {
 			fileExtension = ".png"
 		} else if imageMsg.GetMimetype() == "image/webp" {
@@ -1364,83 +1360,67 @@ func (cm *ClientManager) downloadImage(client *WhatsAppClient, message interface
 		} else if imageMsg.GetMimetype() == "image/gif" {
 			fileExtension = ".gif"
 		}
-		downloadURL = fmt.Sprintf("https://mmg.whatsapp.net/d/%s", imageMsg.GetDirectPath())
-
-	case msg.Message.GetVideoMessage() != nil:
-		// Handle video
-		videoMsg := msg.Message.GetVideoMessage()
-		if videoMsg.GetDirectPath() == "" {
+		// Use whatsmeow Download to properly decrypt media
+		mediaData, err = client.client.Download(context.Background(), imageMsg)
+		if err != nil {
+			fmt.Printf("Failed to download image for client %s: %v\n", clientID, err)
 			return
 		}
+
+	case msg.Message.GetVideoMessage() != nil:
+		videoMsg := msg.Message.GetVideoMessage()
 		mediaType = "video"
-		fileExtension = ".mp4" // Default for videos
+		fileExtension = ".mp4"
 		if videoMsg.GetMimetype() == "video/3gpp" {
 			fileExtension = ".3gp"
 		} else if videoMsg.GetMimetype() == "video/webm" {
 			fileExtension = ".webm"
 		}
-		downloadURL = fmt.Sprintf("https://mmg.whatsapp.net/d/%s", videoMsg.GetDirectPath())
-
-	case msg.Message.GetAudioMessage() != nil:
-		// Handle audio
-		audioMsg := msg.Message.GetAudioMessage()
-		if audioMsg.GetDirectPath() == "" {
+		mediaData, err = client.client.Download(context.Background(), videoMsg)
+		if err != nil {
+			fmt.Printf("Failed to download video for client %s: %v\n", clientID, err)
 			return
 		}
+
+	case msg.Message.GetAudioMessage() != nil:
+		audioMsg := msg.Message.GetAudioMessage()
 		mediaType = "audio"
-		fileExtension = ".ogg" // Default for WhatsApp audio
+		fileExtension = ".ogg"
 		if audioMsg.GetMimetype() == "audio/mpeg" {
 			fileExtension = ".mp3"
 		} else if audioMsg.GetMimetype() == "audio/mp4" {
 			fileExtension = ".m4a"
 		}
-		downloadURL = fmt.Sprintf("https://mmg.whatsapp.net/d/%s", audioMsg.GetDirectPath())
-
-	case msg.Message.GetDocumentMessage() != nil:
-		// Handle document
-		docMsg := msg.Message.GetDocumentMessage()
-		if docMsg.GetDirectPath() == "" {
+		mediaData, err = client.client.Download(context.Background(), audioMsg)
+		if err != nil {
+			fmt.Printf("Failed to download audio for client %s: %v\n", clientID, err)
 			return
 		}
+
+	case msg.Message.GetDocumentMessage() != nil:
+		docMsg := msg.Message.GetDocumentMessage()
 		mediaType = "document"
-		// Extract extension from filename
 		fileName := docMsg.GetFileName()
 		if ext := filepath.Ext(fileName); ext != "" {
 			fileExtension = ext
 		} else {
-			fileExtension = ".bin" // Default for unknown documents
+			fileExtension = ".bin"
 		}
-		downloadURL = fmt.Sprintf("https://mmg.whatsapp.net/d/%s", docMsg.GetDirectPath())
+		mediaData, err = client.client.Download(context.Background(), docMsg)
+		if err != nil {
+			fmt.Printf("Failed to download document for client %s: %v\n", clientID, err)
+			return
+		}
 
 	default:
-		return // No media to download
+		return
 	}
 
 	mediaID := msg.Info.ID
 	mediaPath := filepath.Join(clientDir, mediaID+fileExtension)
 
-	// Download the image
-	resp, err := http.Get(downloadURL)
-	if err != nil {
-		fmt.Printf("Failed to download %s for client %s: %v\n", mediaType, clientID, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("%s download failed with status %d for client %s\n", mediaType, resp.StatusCode, clientID)
-		return
-	}
-
-	// Save media to file
-	file, err := os.Create(mediaPath)
-	if err != nil {
-		fmt.Printf("Failed to create %s file for client %s: %v\n", mediaType, clientID, err)
-		return
-	}
-	defer file.Close()
-
-	_, err = io.Copy(file, resp.Body)
+	// Save decrypted media to file
+	err = os.WriteFile(mediaPath, mediaData, 0644)
 	if err != nil {
 		fmt.Printf("Failed to save %s file for client %s: %v\n", mediaType, clientID, err)
 		return
@@ -1451,7 +1431,7 @@ func (cm *ClientManager) downloadImage(client *WhatsAppClient, message interface
 	client.images[mediaID] = mediaPath
 	client.mutex.Unlock()
 
-	fmt.Printf("%s downloaded for client %s: %s -> %s\n", strings.Title(mediaType), clientID, mediaID, mediaPath)
+	fmt.Printf("%s downloaded for client %s: %s -> %s (%d bytes)\n", strings.Title(mediaType), clientID, mediaID, mediaPath, len(mediaData))
 }
 
 func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message interface{}) map[string]interface{} {
