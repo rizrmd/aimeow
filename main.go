@@ -1541,32 +1541,79 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		// SenderAlt is empty, try to lookup LID using whatsmeow's GetUserInfo
 		var potentialLIDs []types.JID
 
-		// Collect potential LID JIDs
+		// Helper to check if a number looks like a LID (not a real phone)
+		isLIDNumber := func(num string) bool {
+			if len(num) < 14 {
+				return false
+			}
+			// Known LID patterns
+			if strings.HasPrefix(num, "100") || strings.HasPrefix(num, "101") || strings.HasPrefix(num, "102") {
+				return true
+			}
+			// Too long for any real phone number
+			if len(num) >= 16 {
+				return true
+			}
+			// Country-specific checks
+			if strings.HasPrefix(num, "1") && len(num) > 11 {
+				return true // US/Canada max 11 digits
+			}
+			if strings.HasPrefix(num, "62") && len(num) > 14 {
+				return true // Indonesia max 14 digits
+			}
+			return false
+		}
+
+		// Collect potential LID JIDs - check both @lid suffix AND suspicious number patterns
 		if strings.Contains(msg.Info.Chat.String(), "@lid") {
 			potentialLIDs = append(potentialLIDs, msg.Info.Chat)
+		} else if isLIDNumber(msg.Info.Chat.User) {
+			// Number looks like LID even without @lid suffix
+			potentialLIDs = append(potentialLIDs, msg.Info.Chat)
+			fmt.Printf("[LID Detection] Chat %s looks like LID based on number pattern\n", msg.Info.Chat.String())
 		}
 		if strings.Contains(msg.Info.Sender.String(), "@lid") && msg.Info.Sender.String() != msg.Info.Chat.String() {
 			potentialLIDs = append(potentialLIDs, msg.Info.Sender)
+		} else if isLIDNumber(msg.Info.Sender.User) && msg.Info.Sender.String() != msg.Info.Chat.String() {
+			potentialLIDs = append(potentialLIDs, msg.Info.Sender)
+			fmt.Printf("[LID Detection] Sender %s looks like LID based on number pattern\n", msg.Info.Sender.String())
 		}
 
 		// Try to resolve LID to phone number using device store
 		// The device store should have persistent LID to phone number mappings
 		if len(potentialLIDs) > 0 {
 			for _, lidJID := range potentialLIDs {
-				// Check if device store has this LID mapped to a phone number using GetAltJID
+				// Method 1: Check if device store has this LID mapped using GetAltJID
 				if altJID, err := client.deviceStore.GetAltJID(context.Background(), lidJID); err == nil && altJID.User != "" {
 					fromUser = altJID.User
 					fmt.Printf("[LID Lookup] Found phone via DeviceStore.GetAltJID: %s -> %s\n", lidJID.String(), altJID.String())
 					break
 				}
 
-				// Also try GetUserInfo as fallback
+				// Method 2: Try ResolveContactQRLink to get contact info
+				if contactInfo, err := client.client.ResolveContactQRLink(context.Background(), lidJID.User); err == nil && contactInfo.JID.User != "" {
+					// Check if resolved JID is a phone number (not LID)
+					if !strings.Contains(contactInfo.JID.String(), "@lid") {
+						fromUser = contactInfo.JID.User
+						fmt.Printf("[LID Lookup] Found phone via ResolveContactQRLink: %s -> %s\n", lidJID.String(), fromUser)
+						// Store the mapping for future use
+						client.client.StoreLIDPNMapping(context.Background(), lidJID, contactInfo.JID)
+						break
+					}
+				}
+
+				// Method 3: Try GetUserInfo as fallback
 				userInfoMap, err := client.client.GetUserInfo(context.Background(), []types.JID{lidJID})
 				if err == nil {
-					if userInfo, exists := userInfoMap[lidJID]; exists && userInfo.LID.User != "" && userInfo.LID.User != lidJID.User {
-						fromUser = userInfo.LID.User
-						fmt.Printf("[LID Lookup] Found phone via GetUserInfo: %s -> %s\n", lidJID.String(), fromUser)
-						break
+					if userInfo, exists := userInfoMap[lidJID]; exists {
+						// Check if VerifiedName has phone info or try to get from other fields
+						fmt.Printf("[LID Lookup] GetUserInfo result for %s: LID=%s, VerifiedName=%+v\n",
+							lidJID.String(), userInfo.LID.String(), userInfo.VerifiedName)
+						if userInfo.LID.User != "" && userInfo.LID.User != lidJID.User && !strings.Contains(userInfo.LID.String(), "@lid") {
+							fromUser = userInfo.LID.User
+							fmt.Printf("[LID Lookup] Found phone via GetUserInfo.LID: %s -> %s\n", lidJID.String(), fromUser)
+							break
+						}
 					}
 				}
 			}
