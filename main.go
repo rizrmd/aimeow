@@ -514,6 +514,13 @@ type DeleteMessageRequest struct {
 	MessageID string `json:"messageId" binding:"required"`
 }
 
+type ProfilePictureResponse struct {
+	Phone      string `json:"phone"`
+	PictureURL string `json:"pictureUrl,omitempty"`
+	HasPicture bool   `json:"hasPicture"`
+	Error      string `json:"error,omitempty"`
+}
+
 // @Summary Create a new WhatsApp client
 // @Description Creates a new WhatsApp client and returns QR code for pairing
 // @Tags clients
@@ -1490,6 +1497,92 @@ func deleteMessage(c *gin.Context) {
 	})
 }
 
+// @Summary Get profile picture URL
+// @Description Gets the profile picture URL for a WhatsApp contact
+// @Tags contacts
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param phone path string true "Phone number (without @s.whatsapp.net)"
+// @Success 200 {object} ProfilePictureResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /clients/{id}/profile-picture/{phone} [get]
+func getProfilePicture(c *gin.Context) {
+	clientID := c.Param("id")
+	phone := c.Param("phone")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, ProfilePictureResponse{
+			Phone:      phone,
+			HasPicture: false,
+			Error:      "client is not connected",
+		})
+		return
+	}
+
+	// Format phone number
+	targetJID := strings.TrimSuffix(phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ProfilePictureResponse{
+			Phone:      phone,
+			HasPicture: false,
+			Error:      fmt.Sprintf("Invalid phone number format: %v", err),
+		})
+		return
+	}
+
+	// Get profile picture info
+	// The second parameter is "preview" - false for full quality
+	pictureInfo, err := waClient.client.GetProfilePictureInfo(context.Background(), targetJIDParsed, &whatsmeow.GetProfilePictureParams{
+		Preview: false,
+	})
+
+	if err != nil {
+		// Check if it's a "not found" error (user has no profile picture or privacy settings)
+		errStr := err.Error()
+		if strings.Contains(errStr, "item-not-found") || strings.Contains(errStr, "401") || strings.Contains(errStr, "404") {
+			c.JSON(http.StatusOK, ProfilePictureResponse{
+				Phone:      phone,
+				HasPicture: false,
+			})
+			return
+		}
+		c.JSON(http.StatusOK, ProfilePictureResponse{
+			Phone:      phone,
+			HasPicture: false,
+			Error:      fmt.Sprintf("Failed to get profile picture: %v", err),
+		})
+		return
+	}
+
+	if pictureInfo == nil || pictureInfo.URL == "" {
+		c.JSON(http.StatusOK, ProfilePictureResponse{
+			Phone:      phone,
+			HasPicture: false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, ProfilePictureResponse{
+		Phone:      phone,
+		PictureURL: pictureInfo.URL,
+		HasPicture: true,
+	})
+}
+
 func (cm *ClientManager) sendWebhook(client *WhatsAppClient, message interface{}) {
 	if cm.callbackURL == "" {
 		return
@@ -2031,6 +2124,9 @@ func main() {
 			clients.POST("/:id/send-images", sendMultipleImages)
 			clients.POST("/:id/send-document", sendDocument)
 			clients.POST("/:id/delete-message", deleteMessage)
+
+			// Contact info endpoints
+			clients.GET("/:id/profile-picture/:phone", getProfilePicture)
 		}
 
 		// Config endpoints
