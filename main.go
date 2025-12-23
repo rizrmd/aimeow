@@ -1587,15 +1587,42 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
+	// Check if fromUser looks like an LID (not a valid phone number)
+	// LIDs are typically 14+ digit numbers that don't match phone patterns
+	isUnresolvedLID := false
+	if len(fromUser) >= 14 {
+		// Check if it starts with known LID patterns or is too long for any country
+		if strings.HasPrefix(fromUser, "100") || strings.HasPrefix(fromUser, "101") ||
+			strings.HasPrefix(fromUser, "102") || len(fromUser) >= 16 {
+			isUnresolvedLID = true
+		}
+		// Also check country-specific max lengths
+		if strings.HasPrefix(fromUser, "1") && len(fromUser) > 11 { // US/Canada max 11
+			isUnresolvedLID = true
+		}
+		if strings.HasPrefix(fromUser, "62") && len(fromUser) > 14 { // Indonesia max 14
+			isUnresolvedLID = true
+		}
+	}
+
 	// Debug logging to help diagnose issues
-	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s SenderAlt=%s Using=%s\n",
-		msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.SenderAlt.String(), fromUser)
+	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s SenderAlt=%s Using=%s IsLID=%v\n",
+		msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.SenderAlt.String(), fromUser, isUnresolvedLID)
 
 	messageData := map[string]interface{}{
 		"id":        msg.Info.ID,
 		"from":      fromUser,
 		"timestamp": msg.Info.Timestamp,
 		"pushName":  msg.Info.PushName,
+	}
+
+	// Include additional sender info for LID resolution on the receiving end
+	if isUnresolvedLID {
+		messageData["isLID"] = true
+		messageData["rawChat"] = msg.Info.Chat.String()
+		messageData["rawSender"] = msg.Info.Sender.String()
+		messageData["rawSenderAlt"] = msg.Info.SenderAlt.String()
+		fmt.Printf("[Webhook Warning] ⚠️ Unresolved LID detected: %s - SenderAlt was: %s\n", fromUser, msg.Info.SenderAlt.String())
 	}
 
 	// Determine message type and extract content
