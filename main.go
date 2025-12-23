@@ -491,6 +491,13 @@ type SendMultipleImagesRequest struct {
 	Images    []ImageItem `json:"images" binding:"required,min=1"`
 }
 
+type SendDocumentRequest struct {
+	Phone       string `json:"phone" binding:"required"`
+	DocumentURL string `json:"documentUrl" binding:"required,url"`
+	Filename    string `json:"filename,omitempty"`
+	Caption     string `json:"caption,omitempty"`
+}
+
 type ImageItem struct {
 	ImageURL string `json:"imageUrl" binding:"required,url"`
 	Caption  string `json:"caption,omitempty"`
@@ -1278,6 +1285,147 @@ func sendMultipleImages(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// @Summary Send a document to a WhatsApp number
+// @Description Sends a document (PDF, Word, Excel, etc.) from a URL to a WhatsApp number
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param message body SendDocumentRequest true "Document message details"
+// @Success 200 {object} SendMessageResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /clients/{id}/send-document [post]
+func sendDocument(c *gin.Context) {
+	clientID := c.Param("id")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	var req SendDocumentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Format phone number
+	targetJID := strings.TrimSuffix(req.Phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	// Download document from URL
+	resp, err := http.Get(req.DocumentURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to download document: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadRequest, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Document download failed with status: %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Read document data
+	documentData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to read document data: %v", err),
+		})
+		return
+	}
+
+	// Get content type and filename
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Use provided filename or extract from URL
+	filename := req.Filename
+	if filename == "" {
+		// Try to extract filename from URL
+		urlPath := req.DocumentURL
+		if idx := strings.LastIndex(urlPath, "/"); idx != -1 {
+			filename = urlPath[idx+1:]
+		}
+		// Remove query params if any
+		if idx := strings.Index(filename, "?"); idx != -1 {
+			filename = filename[:idx]
+		}
+		if filename == "" {
+			filename = "document"
+		}
+	}
+
+	// Upload document to WhatsApp
+	uploaded, err := waClient.client.Upload(context.Background(), documentData, whatsmeow.MediaDocument)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to upload document to WhatsApp: %v", err),
+		})
+		return
+	}
+
+	// Create document message
+	documentMsg := &waE2E.Message{
+		DocumentMessage: &waE2E.DocumentMessage{
+			URL:           proto.String(uploaded.URL),
+			Mimetype:      proto.String(contentType),
+			FileName:      proto.String(filename),
+			Caption:       proto.String(req.Caption),
+			FileLength:    proto.Uint64(uint64(len(documentData))),
+			FileSHA256:    uploaded.FileSHA256,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			MediaKey:      uploaded.MediaKey,
+			DirectPath:    proto.String(uploaded.DirectPath),
+		},
+	}
+
+	// Stop typing indicator before sending document
+	manager.stopTyping(waClient, targetJIDParsed)
+
+	// Send the document message
+	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, documentMsg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to send document: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, SendMessageResponse{
+		Success:   true,
+		MessageID: sendResp.ID,
+	})
+}
+
 // @Summary Delete a message
 // @Description Deletes/revokes a previously sent message from a WhatsApp chat
 // @Tags messages
@@ -1881,6 +2029,7 @@ func main() {
 			clients.POST("/:id/send-message", sendMessage)
 			clients.POST("/:id/send-image", sendImage)
 			clients.POST("/:id/send-images", sendMultipleImages)
+			clients.POST("/:id/send-document", sendDocument)
 			clients.POST("/:id/delete-message", deleteMessage)
 		}
 
