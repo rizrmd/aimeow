@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix webhook missing fileUrl by downloading media before sending\n\nPreviously, webhook and media download ran asynchronously in parallel,\ncausing fileUrl to be missing from webhook payload since download hadn''t\ncompleted yet. Now media is downloaded synchronously before webhook is\nsent, ensuring fileUrl is always included for media messages.\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git config:*)",
+      "Bash(./aimeow.exe --help)",
+      "Bash(./aimeow.exe:*)",
+      "Bash(timeout:*)",
+      "Bash(git push:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix media download using whatsmeow Download for proper decryption\n\nPreviously used raw http.Get\\(\\) to WhatsApp CDN which fails because\nWhatsApp media is encrypted. Now uses whatsmeow''s Download\\(\\) method\nwhich properly handles authentication and decryption of media files\n\\(images, videos, audio, documents\\).\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(node patch-fix.js:*)",
+      "Bash(xxd:*)",
+      "Bash(npm run build:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

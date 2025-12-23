@@ -502,6 +502,11 @@ type SendMessageResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
+type DeleteMessageRequest struct {
+	Phone     string `json:"phone" binding:"required"`
+	MessageID string `json:"messageId" binding:"required"`
+}
+
 // @Summary Create a new WhatsApp client
 // @Description Creates a new WhatsApp client and returns QR code for pairing
 // @Tags clients
@@ -1273,6 +1278,70 @@ func sendMultipleImages(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// @Summary Delete a message
+// @Description Deletes/revokes a previously sent message from a WhatsApp chat
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param message body DeleteMessageRequest true "Delete message details"
+// @Success 200 {object} SendMessageResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /clients/{id}/delete-message [post]
+func deleteMessage(c *gin.Context) {
+	clientID := c.Param("id")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	var req DeleteMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Format phone number (remove @s.whatsapp.net if present, add if missing)
+	targetJID := strings.TrimSuffix(req.Phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	// Revoke/delete the message
+	// The RevokeMessage function will send a message revocation to the chat
+	resp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, waClient.client.BuildRevoke(targetJIDParsed, types.EmptyJID, req.MessageID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to delete message: %v", err),
+		})
+		return
+	}
+
+	fmt.Printf("[Aimeow Delete] Message %s deleted from chat %s (revoke ID: %s)\n", req.MessageID, targetJID, resp.ID)
+
+	c.JSON(http.StatusOK, SendMessageResponse{
+		Success:   true,
+		MessageID: resp.ID,
+	})
+}
+
 func (cm *ClientManager) sendWebhook(client *WhatsAppClient, message interface{}) {
 	if cm.callbackURL == "" {
 		return
@@ -1738,6 +1807,7 @@ func main() {
 			clients.POST("/:id/send-message", sendMessage)
 			clients.POST("/:id/send-image", sendImage)
 			clients.POST("/:id/send-images", sendMultipleImages)
+			clients.POST("/:id/delete-message", deleteMessage)
 		}
 
 		// Config endpoints
