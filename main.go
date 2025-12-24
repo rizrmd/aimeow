@@ -521,6 +521,13 @@ type ProfilePictureResponse struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type CheckWhatsAppResponse struct {
+	Phone        string `json:"phone"`
+	IsRegistered bool   `json:"isRegistered"`
+	JID          string `json:"jid,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
 // @Summary Create a new WhatsApp client
 // @Description Creates a new WhatsApp client and returns QR code for pairing
 // @Tags clients
@@ -1583,6 +1590,70 @@ func getProfilePicture(c *gin.Context) {
 	})
 }
 
+// @Summary Check if phone number is registered on WhatsApp
+// @Description Checks if a phone number is registered on WhatsApp
+// @Tags contacts
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param phone path string true "Phone number (without @s.whatsapp.net)"
+// @Success 200 {object} CheckWhatsAppResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /clients/{id}/check-whatsapp/{phone} [get]
+func checkWhatsApp(c *gin.Context) {
+	clientID := c.Param("id")
+	phone := c.Param("phone")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, CheckWhatsAppResponse{
+			Phone:        phone,
+			IsRegistered: false,
+			Error:        "client is not connected",
+		})
+		return
+	}
+
+	// Clean phone number
+	cleanPhone := strings.TrimSuffix(phone, "@s.whatsapp.net")
+	cleanPhone = strings.ReplaceAll(cleanPhone, "+", "")
+	cleanPhone = strings.ReplaceAll(cleanPhone, "-", "")
+	cleanPhone = strings.ReplaceAll(cleanPhone, " ", "")
+
+	// Check if phone is on WhatsApp
+	result, err := waClient.client.IsOnWhatsApp(context.Background(), []string{"+" + cleanPhone})
+	if err != nil {
+		c.JSON(http.StatusOK, CheckWhatsAppResponse{
+			Phone:        phone,
+			IsRegistered: false,
+			Error:        fmt.Sprintf("Failed to check: %v", err),
+		})
+		return
+	}
+
+	if len(result) == 0 {
+		c.JSON(http.StatusOK, CheckWhatsAppResponse{
+			Phone:        phone,
+			IsRegistered: false,
+		})
+		return
+	}
+
+	// Get the first result
+	info := result[0]
+	c.JSON(http.StatusOK, CheckWhatsAppResponse{
+		Phone:        phone,
+		IsRegistered: info.IsIn,
+		JID:          info.JID.String(),
+	})
+}
+
 func (cm *ClientManager) sendWebhook(client *WhatsAppClient, message interface{}) {
 	if cm.callbackURL == "" {
 		return
@@ -2127,6 +2198,7 @@ func main() {
 
 			// Contact info endpoints
 			clients.GET("/:id/profile-picture/:phone", getProfilePicture)
+			clients.GET("/:id/check-whatsapp/:phone", checkWhatsApp)
 		}
 
 		// Config endpoints
