@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -496,6 +497,14 @@ type SendDocumentRequest struct {
 	DocumentURL string `json:"documentUrl" binding:"required,url"`
 	Filename    string `json:"filename,omitempty"`
 	Caption     string `json:"caption,omitempty"`
+}
+
+type SendDocumentBase64Request struct {
+	Phone      string `json:"phone" binding:"required"`
+	Base64Data string `json:"base64Data" binding:"required"`
+	Filename   string `json:"filename" binding:"required"`
+	MimeType   string `json:"mimeType,omitempty"`
+	Caption    string `json:"caption,omitempty"`
 }
 
 type ImageItem struct {
@@ -1440,6 +1449,115 @@ func sendDocument(c *gin.Context) {
 	})
 }
 
+// @Summary Send a document via base64 encoded data
+// @Description Sends a document (PDF, Word, Excel, etc.) from base64 encoded data to a WhatsApp number
+// @Tags messages
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param message body SendDocumentBase64Request true "Document message details with base64 data"
+// @Success 200 {object} SendMessageResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /clients/{id}/send-document-base64 [post]
+func sendDocumentBase64(c *gin.Context) {
+	clientID := c.Param("id")
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	var req SendDocumentBase64Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Decode base64 data
+	documentData, err := base64.StdEncoding.DecodeString(req.Base64Data)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to decode base64 data: %v", err),
+		})
+		return
+	}
+
+	fmt.Printf("[Aimeow Base64] Decoded %d bytes from base64 input\n", len(documentData))
+
+	// Format phone number
+	targetJID := strings.TrimSuffix(req.Phone, "@s.whatsapp.net")
+	if !strings.Contains(targetJID, "@") {
+		targetJID += "@s.whatsapp.net"
+	}
+
+	// Parse JID
+	targetJIDParsed, err := types.ParseJID(targetJID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	// Get content type
+	contentType := req.MimeType
+	if contentType == "" {
+		contentType = "application/pdf"
+	}
+
+	// Upload document to WhatsApp
+	uploaded, err := waClient.client.Upload(context.Background(), documentData, whatsmeow.MediaDocument)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to upload document to WhatsApp: %v", err),
+		})
+		return
+	}
+
+	// Create document message
+	documentMsg := &waE2E.Message{
+		DocumentMessage: &waE2E.DocumentMessage{
+			URL:           proto.String(uploaded.URL),
+			Mimetype:      proto.String(contentType),
+			FileName:      proto.String(req.Filename),
+			Caption:       proto.String(req.Caption),
+			FileLength:    proto.Uint64(uint64(len(documentData))),
+			FileSHA256:    uploaded.FileSHA256,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			MediaKey:      uploaded.MediaKey,
+			DirectPath:    proto.String(uploaded.DirectPath),
+		},
+	}
+
+	// Stop typing indicator before sending document
+	manager.stopTyping(waClient, targetJIDParsed)
+
+	// Send the document message
+	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, documentMsg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, SendMessageResponse{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to send document: %v", err),
+		})
+		return
+	}
+
+	fmt.Printf("[Aimeow Base64] ✅ Successfully sent document %s (%d bytes) to %s\n", req.Filename, len(documentData), req.Phone)
+
+	c.JSON(http.StatusOK, SendMessageResponse{
+		Success:   true,
+		MessageID: sendResp.ID,
+	})
+}
+
 // @Summary Delete a message
 // @Description Deletes/revokes a previously sent message from a WhatsApp chat
 // @Tags messages
@@ -2194,6 +2312,7 @@ func main() {
 			clients.POST("/:id/send-image", sendImage)
 			clients.POST("/:id/send-images", sendMultipleImages)
 			clients.POST("/:id/send-document", sendDocument)
+			clients.POST("/:id/send-document-base64", sendDocumentBase64)
 			clients.POST("/:id/delete-message", deleteMessage)
 
 			// Contact info endpoints
