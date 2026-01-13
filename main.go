@@ -331,6 +331,7 @@ func (cm *ClientManager) eventHandler(client *WhatsAppClient) func(interface{}) 
 			}
 
 			// Download media first if message contains media (synchronous to ensure fileUrl is available)
+			// Note: Location messages (static and live) don't have downloadable files
 			if v.Message.GetImageMessage() != nil || v.Message.GetVideoMessage() != nil || v.Message.GetAudioMessage() != nil || v.Message.GetDocumentMessage() != nil {
 				fmt.Printf("Media message detected for client %s, downloading before webhook...\n", client.deviceStore.ID.String())
 				// Release mutex during download to avoid blocking other operations
@@ -2120,6 +2121,33 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		if imgMsg.GetFileLength() > 0 {
 			messageData["fileSize"] = imgMsg.GetFileLength()
 		}
+
+	case msg.Message.GetLiveLocationMessage() != nil:
+		// Live location message
+		locMsg := msg.Message.GetLiveLocationMessage()
+		messageData["type"] = "live_location"
+		messageData["latitude"] = locMsg.GetDegreesLatitude()
+		messageData["longitude"] = locMsg.GetDegreesLongitude()
+		messageData["accuracy"] = locMsg.GetAccuracyInMeters()
+		messageData["speed"] = locMsg.GetSpeedInMps()
+		messageData["bearing"] = locMsg.GetDegreesClockwiseFromMagneticNorth()
+		messageData["caption"] = locMsg.GetCaption()
+		fmt.Printf("[Location] Live location received: lat=%.6f, lng=%.6f, accuracy=%dm\n",
+			locMsg.GetDegreesLatitude(), locMsg.GetDegreesLongitude(), locMsg.GetAccuracyInMeters())
+
+	case msg.Message.GetLocationMessage() != nil:
+		// Static location message
+		locMsg := msg.Message.GetLocationMessage()
+		messageData["type"] = "location"
+		messageData["latitude"] = locMsg.GetDegreesLatitude()
+		messageData["longitude"] = locMsg.GetDegreesLongitude()
+		messageData["name"] = locMsg.GetName()
+		messageData["address"] = locMsg.GetAddress()
+		if locMsg.GetURL() != "" {
+			messageData["url"] = locMsg.GetURL()
+		}
+		fmt.Printf("[Location] Static location received: lat=%.6f, lng=%.6f, name=%s\n",
+			locMsg.GetDegreesLatitude(), locMsg.GetDegreesLongitude(), locMsg.GetName())
 
 	default:
 		// Other message types
