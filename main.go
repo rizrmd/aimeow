@@ -2196,24 +2196,39 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		}
 	}
 
+	// IMPORTANT: If fromUser is still an LID, we cannot reply to this message
+	// Set from field to empty string to prevent consumer from attempting to reply
+	var fromField string
+	if isUnresolvedLID {
+		fromField = "" // Don't send LID in from field
+		fmt.Printf("[Webhook Warning] ⚠️ Cannot reply: fromUser is unresolved LID: %s\n", fromUser)
+	} else {
+		fromField = fromUser
+	}
+
 	// Debug logging to help diagnose issues
-	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s SenderAlt=%s Using=%s IsLID=%v\n",
-		msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.SenderAlt.String(), fromUser, isUnresolvedLID)
+	fmt.Printf("[Webhook Debug] Message from Chat=%s Sender=%s SenderAlt=%s Using=%s IsLID=%v FromField=%s\n",
+		msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.SenderAlt.String(), fromUser, isUnresolvedLID, fromField)
 
 	messageData := map[string]interface{}{
 		"id":        msg.Info.ID,
-		"from":      fromUser,
+		"from":      fromField, // Empty if LID, otherwise phone number
 		"timestamp": msg.Info.Timestamp,
 		"pushName":  msg.Info.PushName,
 	}
 
-	// Include additional sender info for LID resolution on the receiving end
+	// ALWAYS include raw sender info for phone number extraction on the receiving end
+	// This is critical for LID contacts where rawSenderAlt contains the actual phone number
+	messageData["rawChat"] = msg.Info.Chat.String()
+	messageData["rawSender"] = msg.Info.Sender.String()
+	if msg.Info.SenderAlt.String() != "" {
+		messageData["rawSenderAlt"] = msg.Info.SenderAlt.String()
+	}
+
+	// Mark as unresolved LID if we couldn't find a valid phone number
 	if isUnresolvedLID {
 		messageData["isLID"] = true
-		messageData["rawChat"] = msg.Info.Chat.String()
-		messageData["rawSender"] = msg.Info.Sender.String()
-		messageData["rawSenderAlt"] = msg.Info.SenderAlt.String()
-		fmt.Printf("[Webhook Warning] ⚠️ Unresolved LID detected: %s - SenderAlt was: %s\n", fromUser, msg.Info.SenderAlt.String())
+		fmt.Printf("[Webhook Warning] ⚠️ Unresolved LID detected: %s - rawSenderAlt: %s\n", fromUser, msg.Info.SenderAlt.String())
 	}
 
 	// Determine message type and extract content
