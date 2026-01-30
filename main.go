@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
@@ -55,17 +55,17 @@ func getBaseURL(c *gin.Context) string {
 }
 
 type WhatsAppClient struct {
-	client        *whatsmeow.Client
-	deviceStore   *store.Device
-	isConnected   bool
-	qrCode        string
-	connectedAt   *time.Time
-	messages      []string
-	images        map[string]string // image_id -> file_path
-	osName        string            // OS name to set after connection
-	typingTimers  map[string]*time.Timer // chat_id -> typing timer
-	typingActive  map[string]bool        // chat_id -> is currently typing
-	mutex         sync.RWMutex
+	client       *whatsmeow.Client
+	deviceStore  *store.Device
+	isConnected  bool
+	qrCode       string
+	connectedAt  *time.Time
+	messages     []string
+	images       map[string]string      // image_id -> file_path
+	osName       string                 // OS name to set after connection
+	typingTimers map[string]*time.Timer // chat_id -> typing timer
+	typingActive map[string]bool        // chat_id -> is currently typing
+	mutex        sync.RWMutex
 }
 
 type ClientManager struct {
@@ -75,6 +75,8 @@ type ClientManager struct {
 	configPath    string            // Path to configuration file
 	clientIDMap   map[string]string // Maps WhatsApp device ID -> UUID
 	clientMapPath string            // Path to client ID mapping file
+	lidCache      map[string]string // LID -> phone number cache
+	lidCachePath  string            // Path to LID cache file
 	mutex         sync.RWMutex
 }
 
@@ -88,6 +90,13 @@ type ClientIDMapping struct {
 	Mappings map[string]string `json:"mappings"` // WhatsApp device ID -> UUID
 }
 
+// LIDCache represents the persistent mapping of LIDs to phone numbers
+// This allows us to remember LID -> phone number resolutions across restarts
+type LIDCache struct {
+	Mappings  map[string]string `json:"mappings"`  // LID -> phone number
+	UpdatedAt int64             `json:"updatedAt"` // Timestamp of last update
+}
+
 var manager *ClientManager
 var baseURL string // Base URL for generating file URLs in webhooks
 
@@ -95,6 +104,7 @@ func NewClientManager(container *sqlstore.Container, configPath string) *ClientM
 	// Derive client map path from config path
 	configDir := filepath.Dir(configPath)
 	clientMapPath := filepath.Join(configDir, "client_mappings.json")
+	lidCachePath := filepath.Join(configDir, "lid_cache.json")
 
 	cm := &ClientManager{
 		clients:       make(map[string]*WhatsAppClient),
@@ -103,6 +113,8 @@ func NewClientManager(container *sqlstore.Container, configPath string) *ClientM
 		configPath:    configPath,
 		clientIDMap:   make(map[string]string),
 		clientMapPath: clientMapPath,
+		lidCache:      make(map[string]string),
+		lidCachePath:  lidCachePath,
 	}
 	// Load configuration from file
 	if err := cm.loadConfig(); err != nil {
@@ -111,6 +123,10 @@ func NewClientManager(container *sqlstore.Container, configPath string) *ClientM
 	// Load client ID mappings
 	if err := cm.loadClientMappings(); err != nil {
 		fmt.Printf("Failed to load client mappings (will use defaults): %v\n", err)
+	}
+	// Load LID cache
+	if err := cm.loadLIDCache(); err != nil {
+		fmt.Printf("Failed to load LID cache (will use defaults): %v\n", err)
 	}
 	return cm
 }
@@ -218,6 +234,83 @@ func (cm *ClientManager) saveClientMappings() error {
 
 	fmt.Printf("Client mappings saved to %s\n", cm.clientMapPath)
 	return nil
+}
+
+// loadLIDCache loads LID to phone number mappings from JSON file
+func (cm *ClientManager) loadLIDCache() error {
+	data, err := os.ReadFile(cm.lidCachePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Cache file doesn't exist yet, that's okay
+			return nil
+		}
+		return fmt.Errorf("failed to read LID cache file: %w", err)
+	}
+
+	var cache LIDCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return fmt.Errorf("failed to parse LID cache file: %w", err)
+	}
+
+	cm.mutex.Lock()
+	cm.lidCache = cache.Mappings
+	if cm.lidCache == nil {
+		cm.lidCache = make(map[string]string)
+	}
+	cm.mutex.Unlock()
+
+	fmt.Printf("[LID Cache] Loaded %d LID->phone mappings\n", len(cache.Mappings))
+	return nil
+}
+
+// saveLIDCache saves LID to phone number mappings to JSON file
+func (cm *ClientManager) saveLIDCache() error {
+	cm.mutex.RLock()
+	cache := LIDCache{
+		Mappings:  cm.lidCache,
+		UpdatedAt: time.Now().Unix(),
+	}
+	cm.mutex.RUnlock()
+
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal LID cache: %w", err)
+	}
+
+	// Write to temp file first, then rename for atomic operation
+	tempPath := cm.lidCachePath + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temp LID cache file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, cm.lidCachePath); err != nil {
+		return fmt.Errorf("failed to rename temp LID cache file: %w", err)
+	}
+
+	fmt.Printf("[LID Cache] Saved %d mappings to %s\n", len(cm.lidCache), cm.lidCachePath)
+	return nil
+}
+
+// getCachedPhoneNumber looks up a phone number for an LID from cache
+func (cm *ClientManager) getCachedPhoneNumber(lid string) (string, bool) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	phone, exists := cm.lidCache[lid]
+	return phone, exists
+}
+
+// cachePhoneNumber stores a LID -> phone number mapping
+func (cm *ClientManager) cachePhoneNumber(lid, phone string) {
+	cm.mutex.Lock()
+	cm.lidCache[lid] = phone
+	cm.mutex.Unlock()
+	fmt.Printf("[LID Cache] Cached mapping: %s -> %s\n", lid, phone)
+	// Persist to disk asynchronously
+	go func() {
+		if err := cm.saveLIDCache(); err != nil {
+			fmt.Printf("[LID Cache] Failed to save cache: %v\n", err)
+		}
+	}()
 }
 
 func (cm *ClientManager) createClient(osName string) (*WhatsAppClient, string, error) {
@@ -478,19 +571,19 @@ type MessageResponse struct {
 
 // Request and Response structs for sending messages
 type SendMessageRequest struct {
-	Phone    string `json:"phone" binding:"required"`
-	Message  string `json:"message" binding:"required"`
+	Phone   string `json:"phone" binding:"required"`
+	Message string `json:"message" binding:"required"`
 }
 
 type SendImageRequest struct {
-	Phone     string `json:"phone" binding:"required"`
-	ImageURL  string `json:"imageUrl" binding:"required,url"`
-	Caption   string `json:"caption,omitempty"`
+	Phone    string `json:"phone" binding:"required"`
+	ImageURL string `json:"imageUrl" binding:"required,url"`
+	Caption  string `json:"caption,omitempty"`
 }
 
 type SendMultipleImagesRequest struct {
-	Phone     string `json:"phone" binding:"required"`
-	Images    []ImageItem `json:"images" binding:"required,min=1"`
+	Phone  string      `json:"phone" binding:"required"`
+	Images []ImageItem `json:"images" binding:"required,min=1"`
 }
 
 type SendDocumentRequest struct {
@@ -1968,6 +2061,12 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 	if msg.Info.SenderAlt.User != "" {
 		// SenderAlt contains the actual phone number for LID contacts
 		fromUser = msg.Info.SenderAlt.User
+		// If we have a LID in Chat/Sender, cache this mapping for future
+		if strings.Contains(msg.Info.Chat.String(), "@lid") {
+			cm.cachePhoneNumber(msg.Info.Chat.String(), fromUser)
+		} else if strings.Contains(msg.Info.Sender.String(), "@lid") {
+			cm.cachePhoneNumber(msg.Info.Sender.String(), fromUser)
+		}
 	} else {
 		// SenderAlt is empty, try to lookup LID using whatsmeow's GetUserInfo
 		var potentialLIDs []types.JID
@@ -2014,10 +2113,21 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 		// The device store should have persistent LID to phone number mappings
 		if len(potentialLIDs) > 0 {
 			for _, lidJID := range potentialLIDs {
+				lidKey := lidJID.String() // Full JID including @lid suffix
+
+				// Method 0: Check our persistent LID cache first (fastest!)
+				if cachedPhone, found := cm.getCachedPhoneNumber(lidKey); found {
+					fromUser = cachedPhone
+					fmt.Printf("[LID Lookup] Found phone via Cache: %s -> %s\n", lidJID.String(), cachedPhone)
+					break
+				}
+
 				// Method 1: Check if device store has this LID mapped using GetAltJID
 				if altJID, err := client.deviceStore.GetAltJID(context.Background(), lidJID); err == nil && altJID.User != "" {
 					fromUser = altJID.User
 					fmt.Printf("[LID Lookup] Found phone via DeviceStore.GetAltJID: %s -> %s\n", lidJID.String(), altJID.String())
+					// Cache this resolution for future use
+					cm.cachePhoneNumber(lidKey, fromUser)
 					break
 				}
 
@@ -2027,8 +2137,9 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 					if !strings.Contains(contactInfo.JID.String(), "@lid") {
 						fromUser = contactInfo.JID.User
 						fmt.Printf("[LID Lookup] Found phone via ResolveContactQRLink: %s -> %s\n", lidJID.String(), fromUser)
-						// Store the mapping for future use
+						// Store the mapping for future use (both in whatsmeow and our cache)
 						client.client.StoreLIDPNMapping(context.Background(), lidJID, contactInfo.JID)
+						cm.cachePhoneNumber(lidKey, fromUser)
 						break
 					}
 				}
@@ -2043,6 +2154,8 @@ func (cm *ClientManager) extractMessageData(client *WhatsAppClient, message inte
 						if userInfo.LID.User != "" && userInfo.LID.User != lidJID.User && !strings.Contains(userInfo.LID.String(), "@lid") {
 							fromUser = userInfo.LID.User
 							fmt.Printf("[LID Lookup] Found phone via GetUserInfo.LID: %s -> %s\n", lidJID.String(), fromUser)
+							// Cache this resolution for future use
+							cm.cachePhoneNumber(lidKey, fromUser)
 							break
 						}
 					}
