@@ -575,6 +575,10 @@ type SendMessageRequest struct {
 	Message string `json:"message" binding:"required"`
 }
 
+type StopTypingRequest struct {
+	Phone string `json:"phone" binding:"required"`
+}
+
 type SendImageRequest struct {
 	Phone    string `json:"phone" binding:"required"`
 	ImageURL string `json:"imageUrl" binding:"required,url"`
@@ -1138,8 +1142,9 @@ func sendMessage(c *gin.Context) {
 		return
 	}
 
-	// Stop typing indicator before sending message
-	manager.stopTyping(waClient, targetJIDParsed)
+	// Note: Don't stop typing here. Let typing continue until the consumer
+	// explicitly calls /stop-typing endpoint. This allows typing to continue
+	// during tool execution and streaming.
 
 	// Send message
 	msg := &waE2E.Message{
@@ -1158,6 +1163,48 @@ func sendMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, SendMessageResponse{
 		Success:   true,
 		MessageID: resp.ID,
+	})
+}
+
+// @Summary Stop typing indicator
+// @Description Explicitly stops the typing indicator for a chat. This should be called when the entire message (including tool calls) is complete.
+// @Typing control
+// @Accept json
+// @Produce json
+// @Param id path string true "Client ID"
+// @Param body body StopTypingRequest true "Phone number"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /clients/{id}/stop-typing [post]
+func stopTypingHandler(c *gin.Context) {
+	clientID := c.Param("id")
+
+	var req StopTypingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	waClient, err := manager.getClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !waClient.isConnected {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client is not connected"})
+		return
+	}
+
+	targetJID, err := types.ParseJID(req.Phone)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
 	})
 }
 
@@ -1259,9 +1306,6 @@ func sendImage(c *gin.Context) {
 		},
 	}
 
-	// Stop typing indicator before sending image
-	manager.stopTyping(waClient, targetJIDParsed)
-
 	// Send the image message
 	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, imageMsg)
 	if err != nil {
@@ -1322,9 +1366,6 @@ func sendMultipleImages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
 		return
 	}
-
-	// Stop typing indicator before sending images
-	manager.stopTyping(waClient, targetJIDParsed)
 
 	var messageIDs []string
 	var errors []string
@@ -1524,9 +1565,6 @@ func sendDocument(c *gin.Context) {
 		},
 	}
 
-	// Stop typing indicator before sending document
-	manager.stopTyping(waClient, targetJIDParsed)
-
 	// Send the document message
 	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, documentMsg)
 	if err != nil {
@@ -1630,9 +1668,6 @@ func sendDocumentBase64(c *gin.Context) {
 			DirectPath:    proto.String(uploaded.DirectPath),
 		},
 	}
-
-	// Stop typing indicator before sending document
-	manager.stopTyping(waClient, targetJIDParsed)
 
 	// Send the document message
 	sendResp, err := waClient.client.SendMessage(context.Background(), targetJIDParsed, documentMsg)
@@ -2465,6 +2500,7 @@ func main() {
 
 			// Send message endpoints
 			clients.POST("/:id/send-message", sendMessage)
+			clients.POST("/:id/stop-typing", stopTypingHandler)
 			clients.POST("/:id/send-image", sendImage)
 			clients.POST("/:id/send-images", sendMultipleImages)
 			clients.POST("/:id/send-document", sendDocument)
