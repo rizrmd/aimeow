@@ -1197,7 +1197,7 @@ func stopTypingHandler(c *gin.Context) {
 		return
 	}
 
-	targetJID, err := types.ParseJID(req.Phone)
+	_, err = types.ParseJID(req.Phone)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid phone number format: %v", err)})
 		return
